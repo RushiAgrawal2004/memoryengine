@@ -42,6 +42,7 @@ export function createMemoryMcpServer(): McpServer {
         query: z.string().min(1),
         scope: z.string().optional(),
         limit: z.number().int().positive().max(50).optional(),
+        asOf: z.string().optional(),
       },
       outputSchema: {
         results: z.array(
@@ -56,9 +57,14 @@ export function createMemoryMcpServer(): McpServer {
         ),
       },
     },
-    async ({ query, scope, limit }) => {
+    async ({ query, scope, limit, asOf }) => {
       const structuredContent: Record<string, unknown> = {
-        results: await searchMemories({ query, scope, limit }),
+        results: await searchMemories({
+          query,
+          scope,
+          limit,
+          asOf: asOf ? new Date(asOf) : undefined,
+        }),
       };
 
       return {
@@ -88,6 +94,10 @@ export function createMemoryMcpServer(): McpServer {
             memoryId: z.string().optional(),
           }),
         ),
+        graph: z.object({
+          entities: z.number(),
+          relations: z.number(),
+        }),
       },
     },
     async ({ text, scope }) => {

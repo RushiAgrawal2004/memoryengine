@@ -73,6 +73,10 @@ export class LocalHeuristicLLM implements LLM {
       return schema.parse(extractFactsPayload(user));
     }
 
+    if (lowerSystem.includes("edge contradiction")) {
+      return schema.parse(edgeContradictionPayload(user));
+    }
+
     if (lowerSystem.includes("memory operation")) {
       return schema.parse(memoryOpPayload(user));
     }
@@ -103,16 +107,43 @@ export function setLLMForTest(next: LLM | undefined): void {
 function extractFactsPayload(user: string): unknown {
   const text = valueAfter(user, "Episode text:");
   const occurredAt = new Date(valueAfter(user, "Occurred at:"));
-  const facts = text
-    .split(/[.;\n]+/)
+  const sentences = text
+    .split(/(?:[;\n]+|(?<=[a-z0-9_)])\.(?=\s|$))/i)
     .map((item) => item.trim())
-    .filter(Boolean)
-    .map((fact) => ({
+    .filter(Boolean);
+  const facts = sentences.map((fact) => ({
       fact,
       temporalRefs: temporalRefsFor(fact, occurredAt),
     }));
+  const entities = new Map<string, { kind: string; name: string }>();
+  const relations: Array<{
+    srcName: string;
+    srcKind?: string;
+    relation: string;
+    dstName: string;
+    dstKind?: string;
+    fact: string;
+  }> = [];
 
-  return { facts };
+  for (const sentence of sentences) {
+    const relation = relationFor(sentence);
+    if (!relation) {
+      continue;
+    }
+
+    entities.set(`${relation.srcKind}:${relation.srcName}`, {
+      kind: relation.srcKind,
+      name: relation.srcName,
+    });
+    entities.set(`${relation.dstKind}:${relation.dstName}`, {
+      kind: relation.dstKind,
+      name: relation.dstName,
+    });
+    relations.push(relation);
+
+  }
+
+  return { facts, entities: [...entities.values()], relations };
 }
 
 function memoryOpPayload(user: string): unknown {
@@ -150,6 +181,87 @@ function memoryOpPayload(user: string): unknown {
   }
 
   return { op: "ADD", content: fact };
+}
+
+function edgeContradictionPayload(user: string): unknown {
+  const fact = valueAfter(user, "New fact:");
+  const existingJson = valueBetween(user, "Existing edges:", "Return");
+  const existing = safeJsonParse<Array<{ id: string; fact: string }>>(existingJson, []);
+
+  const contradiction = existing.find((edge) => contradicts(edge.fact, fact));
+
+  return {
+    contradicts: Boolean(contradiction),
+    targetId: contradiction?.id,
+  };
+}
+
+function relationFor(sentence: string):
+  | {
+      srcName: string;
+      srcKind: string;
+      relation: string;
+      dstName: string;
+      dstKind: string;
+      fact: string;
+    }
+  | undefined {
+  const normalized = sentence.trim();
+  const calls = normalized.match(/^(.+?)\s+(?:no longer\s+)?calls\s+(.+?)(?:\s+instead)?$/i);
+  if (calls) {
+    return {
+      srcName: calls[1].trim(),
+      srcKind: kindFor(calls[1].trim()),
+      relation: "calls",
+      dstName: calls[2].trim(),
+      dstKind: kindFor(calls[2].trim()),
+      fact: normalized,
+    };
+  }
+
+  const depends = normalized.match(/^(.+?)\s+depends\s+on\s+(.+)$/i);
+  if (depends) {
+    return {
+      srcName: depends[1].trim(),
+      srcKind: kindFor(depends[1].trim()),
+      relation: "depends_on",
+      dstName: depends[2].trim(),
+      dstKind: kindFor(depends[2].trim()),
+      fact: normalized,
+    };
+  }
+
+  return undefined;
+}
+
+function kindFor(name: string): string {
+  if (/\.[cm]?[jt]sx?$|\.py$|\.go$|\.rs$|\.ts$/i.test(name)) {
+    return "file";
+  }
+
+  if (/lib|pkg|package|jwt/i.test(name)) {
+    return "dependency";
+  }
+
+  return "symbol";
+}
+
+function contradicts(oldFact: string, newFact: string): boolean {
+  const oldLower = oldFact.toLowerCase();
+  const newLower = newFact.toLowerCase();
+  if (newLower.includes("no longer") || newLower.includes("instead")) {
+    return true;
+  }
+
+  const oldRelation = relationFor(oldFact);
+  const newRelation = relationFor(newFact);
+  if (!oldRelation || !newRelation) {
+    return false;
+  }
+
+  return oldRelation.srcName.toLowerCase() === newRelation.srcName.toLowerCase()
+    && oldRelation.relation === newRelation.relation
+    && oldRelation.dstName.toLowerCase() !== newRelation.dstName.toLowerCase();
 }
 
 function valueAfter(text: string, marker: string): string {

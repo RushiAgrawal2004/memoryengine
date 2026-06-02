@@ -73,3 +73,9 @@ LLM_API_KEY=...
 LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
 ```
+
+## Knowledge Graph
+
+`memory.remember` also extracts entities and relations into the `entities` and `edges` tables. Graph recall traverses non-expired edges up to two hops and feeds those facts into the same RRF fusion as vector and FTS recall.
+
+Search accepts an optional `asOf` ISO timestamp to answer time-travel queries against bi-temporal memories and graph edges.

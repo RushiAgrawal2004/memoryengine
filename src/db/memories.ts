@@ -16,6 +16,7 @@ export interface SearchMemoryInput {
   query: string;
   scope?: string;
   limit?: number;
+  asOf?: Date;
 }
 
 export interface MemorySearchResult {
@@ -56,5 +57,10 @@ export async function searchMemories(
   }
 
   const limit = Math.min(Math.max(input.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
-  return retrieve(query, input.scope, limit);
+  return retrieve({
+    query,
+    scope: input.scope,
+    topN: limit,
+    asOf: input.asOf,
+  });
 }

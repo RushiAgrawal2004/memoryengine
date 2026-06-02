@@ -2,8 +2,9 @@ import * as z from "zod/v4";
 import { getSqlClient } from "../db/client.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
+import { writeGraph } from "../graph/write.js";
 import { retrieve } from "../read/retrieve.js";
-import { ExtractedFact } from "./extract.js";
+import { ExtractedEntity, ExtractedFact, ExtractedRelation } from "./extract.js";
 
 const memoryOperationSchema = z.object({
   op: z.enum(["ADD", "UPDATE", "INVALIDATE", "NOOP"]),
@@ -16,6 +17,8 @@ export type MemoryOperation = z.infer<typeof memoryOperationSchema>;
 export interface IngestFactsContext {
   scope?: string;
   sourceEpisode?: string;
+  entities?: ExtractedEntity[];
+  relations?: ExtractedRelation[];
 }
 
 export interface AppliedMemoryOperation extends MemoryOperation {
@@ -145,6 +148,15 @@ export async function ingestFacts(
 
     return results;
   });
+
+  if (ctx.entities?.length || ctx.relations?.length) {
+    await writeGraph({
+      scope,
+      entities: ctx.entities ?? [],
+      relations: ctx.relations ?? [],
+      sourceEpisode: ctx.sourceEpisode,
+    });
+  }
 
   return applied;
 }

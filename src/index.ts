@@ -43,6 +43,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
       query?: unknown;
       scope?: unknown;
       limit?: unknown;
+      asOf?: unknown;
     }>();
 
     if (typeof body.query !== "string" || !body.query.trim()) {
@@ -53,6 +54,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
       query: body.query,
       scope: typeof body.scope === "string" ? body.scope : undefined,
       limit: typeof body.limit === "number" ? body.limit : undefined,
+      asOf: typeof body.asOf === "string" ? new Date(body.asOf) : undefined,
     });
 
     return c.json({ results });
