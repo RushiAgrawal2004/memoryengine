@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { checkDatabase } from "./db/client.js";
 import { saveMemory, searchMemories } from "./db/memories.js";
 import { config } from "./lib/config.js";
+import { remember } from "./write/remember.js";
 
 export function createApp(options: { checkDatabase?: () => Promise<boolean> } = {}) {
   const app = new Hono();
@@ -58,6 +59,24 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
     });
 
     return c.json({ results });
+  });
+
+  app.post("/remember", async (c) => {
+    const body = await c.req.json<{
+      text?: unknown;
+      scope?: unknown;
+    }>();
+
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      return c.json({ error: "text is required" }, 400);
+    }
+
+    const result = await remember({
+      text: body.text,
+      scope: typeof body.scope === "string" ? body.scope : undefined,
+    });
+
+    return c.json(result);
   });
 
   return app;

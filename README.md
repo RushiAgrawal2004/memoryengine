@@ -101,3 +101,60 @@ npm run consolidate:loop
 ```
 
 The schedule defaults to every 30 minutes and can be changed with `CONSOLIDATE_CRON`. Each pass logs `REFLECT`, `DECAY`, and `RE-VALIDATE` counts.
+
+## Agent Setup
+
+Build the stdio MCP server:
+
+```sh
+npm run build
+```
+
+Add this MCP server to your agent config:
+
+```jsonc
+{
+  "mcpServers": {
+    "memory-engine": {
+      "command": "npm",
+      "args": ["run", "mcp"],
+      "cwd": "E:/memoryengine",
+      "env": {
+        "DATABASE_URL": "postgres://memory_engine:memory_engine@localhost:5432/memory_engine"
+      }
+    }
+  }
+}
+```
+
+Verify `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list.
+
+## Automatic Capture Hooks
+
+Hook scripts live in `hooks/claude-code` and `hooks/codex`.
+
+Claude Code settings example:
+
+```jsonc
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node E:/memoryengine/hooks/claude-code/session-start.mjs" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node E:/memoryengine/hooks/claude-code/post-tool-use.mjs" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node E:/memoryengine/hooks/claude-code/stop.mjs" }] }]
+  }
+}
+```
+
+Codex hook config example:
+
+```jsonc
+{
+  "hooks": {
+    "session-start": "node E:/memoryengine/hooks/codex/session-start.mjs",
+    "post-tool-use": "node E:/memoryengine/hooks/codex/post-tool-use.mjs",
+    "stop": "node E:/memoryengine/hooks/codex/stop.mjs"
+  }
+}
+```
+
+Set `MEMORY_ENGINE_URL=http://localhost:3777` if your daemon is not on the default URL. Capture hooks are fire-and-forget with a 1500ms abort and a 500ms escape hatch. Session-start recall uses `MEMORY_ENGINE_SEARCH_TIMEOUT_MS` and defaults to 50ms so it stays out of the prompt path.
