@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { saveMemory, searchMemories } from "../db/memories.js";
+import { remember } from "../write/remember.js";
 
 export function createMemoryMcpServer(): McpServer {
   const server = new McpServer({
@@ -59,6 +60,39 @@ export function createMemoryMcpServer(): McpServer {
       const structuredContent: Record<string, unknown> = {
         results: await searchMemories({ query, scope, limit }),
       };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "memory.remember",
+    {
+      description: "Capture an episode, extract facts, and apply intelligent memory operations.",
+      inputSchema: {
+        text: z.string().min(1),
+        scope: z.string().optional(),
+      },
+      outputSchema: {
+        episodeId: z.string(),
+        facts: z.array(z.string()),
+        operations: z.array(
+          z.object({
+            fact: z.string(),
+            op: z.enum(["ADD", "UPDATE", "INVALIDATE", "NOOP"]),
+            targetId: z.string().optional(),
+            content: z.string(),
+            memoryId: z.string().optional(),
+          }),
+        ),
+      },
+    },
+    async ({ text, scope }) => {
+      const result = await remember({ text, scope });
+      const structuredContent: Record<string, unknown> = { ...result };
 
       return {
         content: [{ type: "text", text: JSON.stringify(structuredContent) }],

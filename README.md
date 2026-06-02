@@ -60,3 +60,16 @@ RERANK_PROVIDER=cohere
 COHERE_API_KEY=...
 RERANK_MODEL=rerank-v3.5
 ```
+
+## Intelligent Writes
+
+`memory.remember` captures an episode, extracts atomic facts, retrieves similar memories, and applies one of `ADD`, `UPDATE`, `INVALIDATE`, or `NOOP`.
+
+The local default uses heuristic extraction and operation decisions, so it works without an API key. To use a hosted OpenAI-compatible LLM, set:
+
+```env
+LLM_PROVIDER=hosted
+LLM_API_KEY=...
+LLM_MODEL=gpt-4o-mini
+LLM_BASE_URL=https://api.openai.com/v1
+```
