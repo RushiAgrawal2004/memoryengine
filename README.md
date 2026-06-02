@@ -35,3 +35,28 @@ curl -X POST http://localhost:3777/search -H "Content-Type: application/json" -d
 ```
 
 For now, embeddings are stored as JSON placeholders so the initial local database works without pgvector. The first retrieval phase uses keyword search only; pgvector can be added later when you want semantic search.
+
+## Hybrid Retrieval
+
+The local default uses deterministic local embeddings and no reranker, so it works without API keys:
+
+```sh
+npm run embeddings:backfill
+```
+
+To use hosted embeddings, set:
+
+```env
+EMBEDDINGS_PROVIDER=hosted
+EMBEDDINGS_API_KEY=...
+EMBEDDINGS_MODEL=text-embedding-3-small
+EMBEDDINGS_BASE_URL=https://api.openai.com/v1
+```
+
+To use Cohere reranking, set:
+
+```env
+RERANK_PROVIDER=cohere
+COHERE_API_KEY=...
+RERANK_MODEL=rerank-v3.5
+```
