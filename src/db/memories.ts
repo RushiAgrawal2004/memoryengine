@@ -1,4 +1,5 @@
 import { getSqlClient } from "./client.js";
+import { getEmbeddings } from "../providers/embeddings.js";
 
 export interface SaveMemoryInput {
   content: string;
@@ -34,10 +35,11 @@ export async function saveMemory(input: SaveMemoryInput): Promise<SavedMemory> {
   const sql = getSqlClient();
   const type = input.type ?? DEFAULT_TYPE;
   const scope = input.scope ?? DEFAULT_SCOPE;
+  const [embedding] = await getEmbeddings().embed([input.content]);
 
   const [row] = await sql<{ id: string }[]>`
-    insert into memories (type, scope, content)
-    values (${type}, ${scope}, ${input.content})
+    insert into memories (type, scope, content, embedding)
+    values (${type}, ${scope}, ${input.content}, ${sql.json(embedding)})
     returning id
   `;
 
