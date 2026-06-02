@@ -1,5 +1,6 @@
 import { getSqlClient } from "./client.js";
 import { getEmbeddings } from "../providers/embeddings.js";
+import { retrieve } from "../read/retrieve.js";
 
 export interface SaveMemoryInput {
   content: string;
@@ -54,41 +55,6 @@ export async function searchMemories(
     return [];
   }
 
-  const sql = getSqlClient();
   const limit = Math.min(Math.max(input.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
-
-  const rows = input.scope
-    ? await sql<MemorySearchResult[]>`
-        select
-          id,
-          type,
-          scope,
-          content,
-          ts_rank(fts, websearch_to_tsquery('english', ${query}))::real as rank,
-          created_at::text as "createdAt"
-        from memories
-        where
-          status = 'active'
-          and scope = ${input.scope}
-          and fts @@ websearch_to_tsquery('english', ${query})
-        order by rank desc, created_at desc
-        limit ${limit}
-      `
-    : await sql<MemorySearchResult[]>`
-        select
-          id,
-          type,
-          scope,
-          content,
-          ts_rank(fts, websearch_to_tsquery('english', ${query}))::real as rank,
-          created_at::text as "createdAt"
-        from memories
-        where
-          status = 'active'
-          and fts @@ websearch_to_tsquery('english', ${query})
-        order by rank desc, created_at desc
-        limit ${limit}
-      `;
-
-  return rows;
+  return retrieve(query, input.scope, limit);
 }
