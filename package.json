@@ -11,7 +11,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:local:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-local-postgres.ps1",
-    "embeddings:backfill": "tsx src/scripts/backfill-embeddings.ts"
+    "embeddings:backfill": "tsx src/scripts/backfill-embeddings.ts",
+    "consolidate:once": "tsx src/consolidate/loop.ts --once",
+    "consolidate:loop": "tsx src/consolidate/loop.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.4",
@@ -19,6 +21,7 @@
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.2",
     "hono": "^4.8.2",
+    "node-cron": "^4.2.1",
     "postgres": "^3.4.5",
     "zod": "^4.4.3"
   },

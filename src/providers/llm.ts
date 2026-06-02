@@ -77,6 +77,10 @@ export class LocalHeuristicLLM implements LLM {
       return schema.parse(edgeContradictionPayload(user));
     }
 
+    if (lowerSystem.includes("revalidate") || lowerSystem.includes("re-validation")) {
+      return schema.parse(revalidatePayload(user));
+    }
+
     if (lowerSystem.includes("memory operation")) {
       return schema.parse(memoryOpPayload(user));
     }
@@ -84,7 +88,11 @@ export class LocalHeuristicLLM implements LLM {
     return schema.parse({});
   }
 
-  async chat(_system: string, user: string): Promise<string> {
+  async chat(system: string, user: string): Promise<string> {
+    if (system.toLowerCase().includes("summarize")) {
+      return summarizeEpisodes(user);
+    }
+
     return user;
   }
 }
@@ -194,6 +202,39 @@ function edgeContradictionPayload(user: string): unknown {
     contradicts: Boolean(contradiction),
     targetId: contradiction?.id,
   };
+}
+
+function revalidatePayload(user: string): unknown {
+  const memory = valueAfter(user, "Memory:");
+  const fileContent = valueAfter(user, "Current file content:");
+
+  if (fileContent.toLowerCase().includes(memory.toLowerCase())) {
+    return { op: "NOOP", content: memory };
+  }
+
+  return { op: "INVALIDATE", content: memory };
+}
+
+function summarizeEpisodes(user: string): string {
+  const text = valueAfter(user, "Episodes:");
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-*\d.\s]+/, "").trim())
+    .filter(Boolean);
+
+  const clusters = new Map<string, string[]>();
+  for (const line of lines) {
+    const key = summaryKey(line);
+    const list = clusters.get(key) ?? [];
+    list.push(line);
+    clusters.set(key, list);
+  }
+
+  return [...clusters.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 3)
+    .map(([key, cluster]) => `${key} appears across ${cluster.length} recent episodes`)
+    .join("\n");
 }
 
 function relationFor(sentence: string):
@@ -330,4 +371,9 @@ function overlaps(a: string, b: string): boolean {
 
 function tokens(value: string): string[] {
   return value.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+function summaryKey(value: string): string {
+  const tokenList = tokens(value).filter((token) => token.length > 2);
+  return tokenList.slice(0, 4).join(" ") || value.slice(0, 80);
 }

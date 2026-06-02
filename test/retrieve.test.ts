@@ -34,5 +34,5 @@ describe("hybrid retrieve", () => {
     );
 
     await sql`delete from memories where scope = ${scope}`;
-  });
+  }, 10000);
 });

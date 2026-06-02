@@ -85,3 +85,19 @@ Search accepts an optional `asOf` ISO timestamp to answer time-travel queries ag
 Episodes and memories are stamped with `{ repo, branch, commit }` from the local git repo. When no scope is supplied, the engine derives `project:<repo>` automatically.
 
 File and symbol entities become memory anchors. Run `memory.audit({ scope })` to flag active memories whose anchored files changed after the anchor commit; flagged memories get `attrs.needs_revalidation = true`.
+
+## Consolidation
+
+Run a single maintenance pass:
+
+```sh
+npm run consolidate:once
+```
+
+Run the scheduled loop:
+
+```sh
+npm run consolidate:loop
+```
+
+The schedule defaults to every 30 minutes and can be changed with `CONSOLIDATE_CRON`. Each pass logs `REFLECT`, `DECAY`, and `RE-VALIDATE` counts.

@@ -14,6 +14,10 @@ export interface Config {
   rerankProvider: string;
   cohereApiKey?: string;
   rerankModel: string;
+  consolidateCron: string;
+  reflectEpisodeLimit: number;
+  decayDays: number;
+  decayFloor: number;
 }
 
 const DEFAULT_PORT = 3777;
@@ -22,6 +26,10 @@ const DEFAULT_EMBEDDINGS_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_LLM_MODEL = "gpt-4o-mini";
 const DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_RERANK_MODEL = "rerank-v3.5";
+const DEFAULT_CONSOLIDATE_CRON = "*/30 * * * *";
+const DEFAULT_REFLECT_EPISODE_LIMIT = 100;
+const DEFAULT_DECAY_DAYS = 30;
+const DEFAULT_DECAY_FLOOR = 0.2;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const rawPort = env.PORT;
@@ -45,7 +53,49 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rerankProvider: env.RERANK_PROVIDER ?? "none",
     cohereApiKey: env.COHERE_API_KEY,
     rerankModel: env.RERANK_MODEL ?? DEFAULT_RERANK_MODEL,
+    consolidateCron: env.CONSOLIDATE_CRON ?? DEFAULT_CONSOLIDATE_CRON,
+    reflectEpisodeLimit: parsePositiveInt(
+      env.REFLECT_EPISODE_LIMIT,
+      DEFAULT_REFLECT_EPISODE_LIMIT,
+      "REFLECT_EPISODE_LIMIT",
+    ),
+    decayDays: parsePositiveInt(env.DECAY_DAYS, DEFAULT_DECAY_DAYS, "DECAY_DAYS"),
+    decayFloor: parseFloatWithDefault(env.DECAY_FLOOR, DEFAULT_DECAY_FLOOR, "DECAY_FLOOR"),
   };
 }
 
 export const config = loadConfig();
+
+function parsePositiveInt(
+  raw: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer, received: ${raw}`);
+  }
+
+  return parsed;
+}
+
+function parseFloatWithDefault(
+  raw: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseFloat(raw);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`${name} must be a number, received: ${raw}`);
+  }
+
+  return parsed;
+}
