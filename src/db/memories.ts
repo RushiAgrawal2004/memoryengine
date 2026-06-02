@@ -1,5 +1,6 @@
 import { getSqlClient } from "./client.js";
 import { getEmbeddings } from "../providers/embeddings.js";
+import { currentRepoRef, projectScope } from "../grounding/git.js";
 import { retrieve } from "../read/retrieve.js";
 
 export interface SaveMemoryInput {
@@ -36,12 +37,19 @@ const MAX_LIMIT = 50;
 export async function saveMemory(input: SaveMemoryInput): Promise<SavedMemory> {
   const sql = getSqlClient();
   const type = input.type ?? DEFAULT_TYPE;
-  const scope = input.scope ?? DEFAULT_SCOPE;
+  const repoRef = await currentRepoRef();
+  const scope = input.scope ?? (repoRef ? await projectScope() : DEFAULT_SCOPE);
   const [embedding] = await getEmbeddings().embed([input.content]);
 
   const [row] = await sql<{ id: string }[]>`
-    insert into memories (type, scope, content, embedding)
-    values (${type}, ${scope}, ${input.content}, ${sql.json(embedding)})
+    insert into memories (type, scope, content, embedding, repo_ref)
+    values (
+      ${type},
+      ${scope},
+      ${input.content},
+      ${sql.json(embedding)},
+      ${repoRef ? sql.json(repoRef as never) : null}
+    )
     returning id
   `;
 

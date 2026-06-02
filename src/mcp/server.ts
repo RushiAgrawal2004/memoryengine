@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { saveMemory, searchMemories } from "../db/memories.js";
+import { flagStaleMemories } from "../grounding/staleness.js";
 import { remember } from "../write/remember.js";
 
 export function createMemoryMcpServer(): McpServer {
@@ -103,6 +104,31 @@ export function createMemoryMcpServer(): McpServer {
     async ({ text, scope }) => {
       const result = await remember({ text, scope });
       const structuredContent: Record<string, unknown> = { ...result };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "memory.audit",
+    {
+      description: "Audit memory status and flag stale repo-anchored memories.",
+      inputSchema: {
+        scope: z.string().min(1),
+      },
+      outputSchema: {
+        active: z.number(),
+        invalid: z.number(),
+        needsRevalidation: z.number(),
+        newlyFlagged: z.number(),
+      },
+    },
+    async ({ scope }) => {
+      const audit = await flagStaleMemories(scope);
+      const structuredContent: Record<string, unknown> = { ...audit };
 
       return {
         content: [{ type: "text", text: JSON.stringify(structuredContent) }],

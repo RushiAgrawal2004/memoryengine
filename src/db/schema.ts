@@ -64,6 +64,7 @@ export const memories = pgTable(
     sourceEpisode: uuid("source_episode").references(() => episodes.id),
     repoRef: jsonb("repo_ref").$type<RepoRef>(),
     anchors: jsonb("anchors").$type<Anchor[]>(),
+    attrs: jsonb("attrs").$type<Record<string, unknown>>(),
     supersedes: uuid("supersedes"),
     useCount: integer("use_count").notNull().default(0),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),

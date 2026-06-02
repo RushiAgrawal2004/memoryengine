@@ -79,3 +79,9 @@ LLM_BASE_URL=https://api.openai.com/v1
 `memory.remember` also extracts entities and relations into the `entities` and `edges` tables. Graph recall traverses non-expired edges up to two hops and feeds those facts into the same RRF fusion as vector and FTS recall.
 
 Search accepts an optional `asOf` ISO timestamp to answer time-travel queries against bi-temporal memories and graph edges.
+
+## Repo Grounding
+
+Episodes and memories are stamped with `{ repo, branch, commit }` from the local git repo. When no scope is supplied, the engine derives `project:<repo>` automatically.
+
+File and symbol entities become memory anchors. Run `memory.audit({ scope })` to flag active memories whose anchored files changed after the anchor commit; flagged memories get `attrs.needs_revalidation = true`.

@@ -1,8 +1,10 @@
 import * as z from "zod/v4";
 import { getSqlClient } from "../db/client.js";
+import type { Anchor } from "../db/schema.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
 import { writeGraph } from "../graph/write.js";
+import { currentRepoRef, projectScope } from "../grounding/git.js";
 import { retrieve } from "../read/retrieve.js";
 import { ExtractedEntity, ExtractedFact, ExtractedRelation } from "./extract.js";
 
@@ -32,7 +34,9 @@ export async function ingestFacts(
   facts: ExtractedFact[],
   ctx: IngestFactsContext = {},
 ): Promise<AppliedMemoryOperation[]> {
-  const scope = ctx.scope ?? DEFAULT_SCOPE;
+  const repoRef = await currentRepoRef();
+  const scope = ctx.scope ?? (repoRef ? await projectScope() : DEFAULT_SCOPE);
+  const anchors = anchorsFromEntities(ctx.entities ?? [], repoRef?.commit);
   const decisions: AppliedMemoryOperation[] = [];
 
   for (const fact of facts) {
@@ -78,13 +82,23 @@ export async function ingestFacts(
 
       if (decision.op === "ADD") {
         const [row] = await tx<Array<{ id: string }>>`
-          insert into memories (type, scope, content, embedding, source_episode)
+          insert into memories (
+            type,
+            scope,
+            content,
+            embedding,
+            source_episode,
+            repo_ref,
+            anchors
+          )
           values (
             'semantic',
             ${scope},
             ${decision.content},
             ${tx.json(embedding)},
-            ${ctx.sourceEpisode ?? null}
+            ${ctx.sourceEpisode ?? null},
+            ${repoRef ? tx.json(repoRef as never) : null},
+            ${anchors.length > 0 ? tx.json(anchors as never) : null}
           )
           returning id
         `;
@@ -102,6 +116,8 @@ export async function ingestFacts(
           set
             content = ${decision.content},
             embedding = ${tx.json(embedding)},
+            repo_ref = ${repoRef ? tx.json(repoRef as never) : null},
+            anchors = ${anchors.length > 0 ? tx.json(anchors as never) : null},
             confidence = least(confidence + 0.1, 1.0),
             last_used_at = now()
           where id = ${decision.targetId}
@@ -131,6 +147,8 @@ export async function ingestFacts(
           content,
           embedding,
           source_episode,
+          repo_ref,
+          anchors,
           supersedes
         )
         values (
@@ -139,6 +157,8 @@ export async function ingestFacts(
           ${decision.content},
           ${tx.json(embedding)},
           ${ctx.sourceEpisode ?? null},
+          ${repoRef ? tx.json(repoRef as never) : null},
+          ${anchors.length > 0 ? tx.json(anchors as never) : null},
           ${decision.targetId}
         )
         returning id
@@ -159,4 +179,34 @@ export async function ingestFacts(
   }
 
   return applied;
+}
+
+function anchorsFromEntities(
+  entities: ExtractedEntity[],
+  commit: string | undefined,
+): Anchor[] {
+  if (!commit) {
+    return [];
+  }
+
+  const anchors = new Map<string, Anchor>();
+
+  for (const entity of entities) {
+    if (entity.kind === "file") {
+      anchors.set(`file:${entity.name}`, {
+        path: entity.name,
+        commit,
+      });
+    }
+
+    if (entity.kind === "symbol") {
+      anchors.set(`symbol:${entity.name}`, {
+        path: "",
+        symbol: entity.name,
+        commit,
+      });
+    }
+  }
+
+  return [...anchors.values()];
 }
