@@ -106,7 +106,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
 }
 
 export function startHttpServer(): void {
-  serve(
+  const server = serve(
     {
       fetch: createApp().fetch,
       port: config.port,
@@ -116,6 +116,16 @@ export function startHttpServer(): void {
       console.log(`viewer available at http://localhost:${info.port}/viewer`);
     },
   );
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`memory-engine is already using port ${config.port}.`);
+      console.error(`If it is already running, open http://localhost:${config.port}/viewer`);
+      console.error(`Or run with another port: $env:PORT=3778; memoryengine`);
+      process.exit(1);
+    }
+
+    throw error;
+  });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

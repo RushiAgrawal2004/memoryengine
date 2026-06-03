@@ -13,6 +13,11 @@ async function main(): Promise<void> {
   switch (command) {
     case "start":
     case "serve":
+      if (await isHttpServerRunning()) {
+        console.log(`memory-engine is already running on http://localhost:${config.port}`);
+        console.log(`viewer available at http://localhost:${config.port}/viewer`);
+        return;
+      }
       startHttpServer();
       return;
     case "demo":
@@ -115,12 +120,24 @@ function printConnect(agent: string | undefined): void {
 
 async function runDoctor(): Promise<void> {
   const db = await checkDatabase();
+  const serverRunning = await isHttpServerRunning();
   console.log(`database: ${db ? "ok" : "failed"}`);
-  console.log(`server: http://localhost:${config.port}`);
+  console.log(`server: ${serverRunning ? "running" : "not running"} at http://localhost:${config.port}`);
   console.log(`viewer: http://localhost:${config.port}/viewer`);
   console.log(`embeddings provider: ${config.embeddingsProvider}`);
   console.log(`llm provider: ${config.llmProvider}`);
   console.log(`rerank provider: ${config.rerankProvider}`);
+}
+
+async function isHttpServerRunning(): Promise<boolean> {
+  try {
+    const response = await fetch(`http://localhost:${config.port}/health`, {
+      signal: AbortSignal.timeout(750),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 function printHelp(): void {
