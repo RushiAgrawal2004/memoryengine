@@ -181,6 +181,8 @@ Add this MCP server to your agent config:
 
 Verify `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list.
 
+For the real Codex todo-app integration test with Gemini, follow [docs/CODEX_REAL_SCENARIO.md](docs/CODEX_REAL_SCENARIO.md).
+
 ## Automatic Capture Hooks
 
 Hook scripts live in `hooks/claude-code` and `hooks/codex`.
