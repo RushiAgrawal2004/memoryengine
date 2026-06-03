@@ -29,15 +29,18 @@ export interface EvalModeResult {
   probes: number;
   recallAtK: number;
   answerAccuracy: number;
+  p50ContextChars: number;
+  p95ContextChars: number;
   p50LatencyMs: number;
   p95LatencyMs: number;
 }
 
-export type EvalMode = "with-memory" | "without-memory";
+export type EvalMode = "with-memory" | "context-baseline" | "empty-baseline";
 
 interface ProbeResult {
   recalled: boolean;
   correct: boolean;
+  contextChars: number;
   latencyMs: number;
 }
 
@@ -63,6 +66,19 @@ export const codingBenchmark: BenchmarkItem[] = [
     ],
   },
   {
+    id: "test-runner-choice",
+    sessions: [
+      "Unit tests use Vitest.",
+      "CI runs npm test -- --run before release.",
+    ],
+    probes: [
+      {
+        question: "Which test runner does the project use?",
+        expectedKeywords: ["Vitest"],
+      },
+    ],
+  },
+  {
     id: "auth-dependency-chain",
     sessions: [
       "auth.ts calls verifyToken.",
@@ -73,6 +89,19 @@ export const codingBenchmark: BenchmarkItem[] = [
       {
         question: "What dependency does verifyToken depend on?",
         expectedKeywords: ["jwtlib"],
+      },
+    ],
+  },
+  {
+    id: "token-library-change",
+    sessions: [
+      "The first auth prototype used jsonwebtoken.",
+      "We switched auth token verification to jose for Edge compatibility.",
+    ],
+    probes: [
+      {
+        question: "Which token library should auth use now?",
+        expectedKeywords: ["jose"],
       },
     ],
   },
@@ -89,11 +118,50 @@ export const codingBenchmark: BenchmarkItem[] = [
       },
     ],
   },
+  {
+    id: "database-choice",
+    sessions: [
+      "The memory engine stores durable state in PostgreSQL.",
+      "Local development uses postgres://memory_engine:memory_engine@localhost:5432/memory_engine.",
+    ],
+    probes: [
+      {
+        question: "Which database stores durable memory state?",
+        expectedKeywords: ["postgres"],
+      },
+    ],
+  },
+  {
+    id: "repo-grounding",
+    sessions: [
+      "Every code-derived memory should carry repo refs and anchors.",
+      "Staleness is detected by comparing anchored file commits against the latest file commit.",
+    ],
+    probes: [
+      {
+        question: "How does the system detect stale code memories?",
+        expectedKeywords: ["anchored", "commit"],
+      },
+    ],
+  },
+  {
+    id: "graph-builder-boundary",
+    sessions: [
+      "Graphify-style use-case graph building is outsourced.",
+      "This repo owns repo-grounded memory, graph persistence, retrieval, and validation.",
+    ],
+    probes: [
+      {
+        question: "Who owns Graphify-style use-case graph building?",
+        expectedKeywords: ["outsourced"],
+      },
+    ],
+  },
 ];
 
 export async function runEval(options: EvalOptions = {}): Promise<EvalModeResult[]> {
   const items = options.items ?? codingBenchmark;
-  const modes = options.modes ?? ["without-memory", "with-memory"];
+  const modes = options.modes ?? ["context-baseline", "with-memory"];
   const scratchPrefix = options.scratchPrefix ?? `eval:${Date.now()}`;
   const results: EvalModeResult[] = [];
 
@@ -111,7 +179,7 @@ export async function runEval(options: EvalOptions = {}): Promise<EvalModeResult
       }
 
       for (const probe of item.probes) {
-        probeResults.push(await runProbe(scope, probe, mode));
+        probeResults.push(await runProbe(scope, item, probe, mode));
       }
 
       await resetScratchScope(scope);
@@ -125,13 +193,13 @@ export async function runEval(options: EvalOptions = {}): Promise<EvalModeResult
 
 export function formatResultsTable(results: EvalModeResult[]): string {
   const lines = [
-    "| Mode | Items | Probes | Recall@k | Answer accuracy | p50 latency | p95 latency |",
-    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Mode | Items | Probes | Recall/coverage | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   ];
 
   for (const result of results) {
     lines.push(
-      `| ${result.mode} | ${result.items} | ${result.probes} | ${percent(result.recallAtK)} | ${percent(result.answerAccuracy)} | ${Math.round(result.p50LatencyMs)}ms | ${Math.round(result.p95LatencyMs)}ms |`,
+      `| ${result.mode} | ${result.items} | ${result.probes} | ${percent(result.recallAtK)} | ${percent(result.answerAccuracy)} | ${result.p50ContextChars} chars | ${result.p95ContextChars} chars | ${Math.round(result.p50LatencyMs)}ms | ${Math.round(result.p95LatencyMs)}ms |`,
     );
   }
 
@@ -140,23 +208,40 @@ export function formatResultsTable(results: EvalModeResult[]): string {
 
 async function runProbe(
   scope: string,
+  item: BenchmarkItem,
   probe: BenchmarkProbe,
   mode: EvalMode,
 ): Promise<ProbeResult> {
   const started = performance.now();
-  const docs = mode === "with-memory"
-    ? await retrieve({ query: probe.question, scope, topN: probe.k ?? DEFAULT_K })
-    : [];
+  const context = await contextForProbe(scope, item, probe, mode);
   const latencyMs = performance.now() - started;
-  const context = docs.map((doc) => doc.content).join("\n");
   const recalled = containsAllKeywords(context, probe.expectedKeywords);
   const judgment = await judgeAnswer(probe.question, context, probe.expectedKeywords);
 
   return {
     recalled,
     correct: judgment.correct,
+    contextChars: context.length,
     latencyMs,
   };
+}
+
+async function contextForProbe(
+  scope: string,
+  item: BenchmarkItem,
+  probe: BenchmarkProbe,
+  mode: EvalMode,
+): Promise<string> {
+  if (mode === "empty-baseline") {
+    return "";
+  }
+
+  if (mode === "context-baseline") {
+    return item.sessions.join("\n");
+  }
+
+  const docs = await retrieve({ query: probe.question, scope, topN: probe.k ?? DEFAULT_K });
+  return docs.map((doc) => doc.content).join("\n");
 }
 
 async function judgeAnswer(
@@ -187,6 +272,7 @@ function summarizeMode(
   const recalled = probeResults.filter((result) => result.recalled).length;
   const correct = probeResults.filter((result) => result.correct).length;
   const latencies = probeResults.map((result) => result.latencyMs);
+  const contextSizes = probeResults.map((result) => result.contextChars);
 
   return {
     mode,
@@ -194,6 +280,8 @@ function summarizeMode(
     probes,
     recallAtK: probes === 0 ? 0 : recalled / probes,
     answerAccuracy: probes === 0 ? 0 : correct / probes,
+    p50ContextChars: Math.round(percentile(contextSizes, 0.5)),
+    p95ContextChars: Math.round(percentile(contextSizes, 0.95)),
     p50LatencyMs: percentile(latencies, 0.5),
     p95LatencyMs: percentile(latencies, 0.95),
   };

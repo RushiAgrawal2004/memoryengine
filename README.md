@@ -119,14 +119,14 @@ Run the local coding-memory benchmark:
 npm run eval
 ```
 
-Current local smoke result:
+Current local smoke result compares memory retrieval against a fair no-store baseline that receives the same session history as raw context:
 
-| Mode | Items | Probes | Recall@k | Answer accuracy | p50 latency | p95 latency |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| without-memory | 3 | 3 | 0% | 0% | 0ms | 0ms |
-| with-memory | 3 | 3 | 100% | 100% | 3ms | 5ms |
+| Mode | Items | Probes | Recall/coverage | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| context-baseline | 8 | 8 | 100% | 100% | 111 chars | 150 chars | 0ms | 0ms |
+| with-memory | 8 | 8 | 100% | 100% | 109 chars | 148 chars | 2ms | 11ms |
 
-This table proves the eval harness and memory plumbing work; it is not a public product benchmark yet. A credible benchmark still needs a fair no-store baseline with the same recent session context plus larger datasets such as LoCoMo or LongMemEval.
+This table proves the eval harness and memory plumbing work with a fairer baseline; it is not a public product benchmark yet. A credible benchmark still needs larger datasets such as LoCoMo or LongMemEval and real hosted model validation.
 
 Start the daemon and open `http://localhost:3777/viewer` to inspect Memories, Entities, Edges, and Episodes.
 

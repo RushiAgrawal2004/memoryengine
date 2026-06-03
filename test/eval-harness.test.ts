@@ -7,15 +7,18 @@ describe("eval harness", () => {
     await closeDb();
   });
 
-  it("reports better accuracy with memory enabled", async () => {
+  it("compares memory retrieval against a fair context baseline", async () => {
     const results = await runEval({
       scratchPrefix: `test-eval:${crypto.randomUUID()}`,
     });
-    const without = results.find((result) => result.mode === "without-memory");
+    const baseline = results.find((result) => result.mode === "context-baseline");
     const withMemory = results.find((result) => result.mode === "with-memory");
 
-    expect(without?.answerAccuracy).toBe(0);
-    expect(withMemory?.answerAccuracy).toBeGreaterThan(without?.answerAccuracy ?? 0);
-    expect(formatResultsTable(results)).toContain("| Mode | Items | Probes |");
-  }, 20000);
+    expect(baseline?.answerAccuracy).toBeGreaterThan(0);
+    expect(withMemory?.answerAccuracy).toBeGreaterThan(0);
+    expect(withMemory?.p50ContextChars ?? Number.POSITIVE_INFINITY).toBeLessThan(
+      baseline?.p50ContextChars ?? 0,
+    );
+    expect(formatResultsTable(results)).toContain("Recall/coverage");
+  }, 30000);
 });

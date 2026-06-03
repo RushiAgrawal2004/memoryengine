@@ -183,7 +183,7 @@ function memoryOpPayload(user: string): unknown {
     return { op: "NOOP", targetId: exact.id, content: exact.content };
   }
 
-  const updatable = existing.find((memory) => overlaps(memory.content, fact));
+  const updatable = existing.find((memory) => shouldUpdateMemory(memory.content, fact));
   if (updatable && !/\bswitched\b|\binstead\b|\breplaced\b/i.test(fact)) {
     return {
       op: "UPDATE",
@@ -383,13 +383,43 @@ function safeJsonParse<T>(value: string, fallback: T): T {
   }
 }
 
-function overlaps(a: string, b: string): boolean {
-  const aTokens = new Set(tokens(a));
-  return tokens(b).some((token) => aTokens.has(token));
+function shouldUpdateMemory(existing: string, fact: string): boolean {
+  const existingTokens = meaningfulTokens(existing);
+  const factTokens = meaningfulTokens(fact);
+  if (existingTokens.length === 0 || factTokens.length === 0) {
+    return false;
+  }
+
+  const factSet = new Set(factTokens);
+  const shared = existingTokens.filter((token) => factSet.has(token)).length;
+
+  return shared / existingTokens.length >= 0.8;
 }
 
 function tokens(value: string): string[] {
   return value.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+function meaningfulTokens(value: string): string[] {
+  const stopwords = new Set([
+    "a",
+    "an",
+    "and",
+    "are",
+    "by",
+    "for",
+    "in",
+    "is",
+    "of",
+    "on",
+    "or",
+    "the",
+    "this",
+    "to",
+    "we",
+  ]);
+
+  return tokens(value).filter((token) => token.length > 2 && !stopwords.has(token));
 }
 
 function summaryKey(value: string): string {
