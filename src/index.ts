@@ -5,6 +5,7 @@ import { checkDatabase } from "./db/client.js";
 import { saveMemory, searchMemories } from "./db/memories.js";
 import { config } from "./lib/config.js";
 import { runStdioServer } from "./mcp/server.js";
+import { registerViewerRoutes } from "./viewer/routes.js";
 import { remember } from "./write/remember.js";
 
 export function createApp(options: { checkDatabase?: () => Promise<boolean> } = {}) {
@@ -80,6 +81,8 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
     return c.json(result);
   });
 
+  registerViewerRoutes(app);
+
   return app;
 }
 
@@ -90,14 +93,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       process.exit(1);
     });
   } else {
-  serve(
-    {
-      fetch: createApp().fetch,
-      port: config.port,
-    },
-    (info) => {
-      console.log(`memory-engine listening on http://localhost:${info.port}`);
-    },
-  );
+    serve(
+      {
+        fetch: createApp().fetch,
+        port: config.port,
+      },
+      (info) => {
+        console.log(`memory-engine listening on http://localhost:${info.port}`);
+      },
+    );
   }
 }

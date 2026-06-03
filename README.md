@@ -102,6 +102,23 @@ npm run consolidate:loop
 
 The schedule defaults to every 30 minutes and can be changed with `CONSOLIDATE_CRON`. Each pass logs `REFLECT`, `DECAY`, and `RE-VALIDATE` counts.
 
+## Eval And Viewer
+
+Run the local coding-memory benchmark:
+
+```sh
+npm run eval
+```
+
+Current local result:
+
+| Mode | Items | Probes | Recall@k | Answer accuracy | p50 latency | p95 latency |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| without-memory | 3 | 3 | 0% | 0% | 0ms | 0ms |
+| with-memory | 3 | 3 | 100% | 100% | 2ms | 2ms |
+
+Start the daemon and open `http://localhost:3777/viewer` to inspect Memories, Entities, Edges, and Episodes.
+
 ## Agent Setup
 
 Build the stdio MCP server:
