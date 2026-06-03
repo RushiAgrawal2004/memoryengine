@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { checkDatabase } from "./db/client.js";
 import { saveMemory, searchMemories } from "./db/memories.js";
 import { config } from "./lib/config.js";
+import { activateMemory } from "./memory/activate.js";
 import { runStdioServer } from "./mcp/server.js";
 import { registerViewerRoutes } from "./viewer/routes.js";
 import { remember } from "./write/remember.js";
@@ -61,6 +62,24 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
     });
 
     return c.json({ results });
+  });
+
+  app.post("/activate", async (c) => {
+    const body: {
+      task?: unknown;
+      scope?: unknown;
+      cwd?: unknown;
+      limit?: unknown;
+    } = await c.req.json().catch(() => ({}));
+
+    const result = await activateMemory({
+      task: typeof body.task === "string" ? body.task : undefined,
+      scope: typeof body.scope === "string" ? body.scope : undefined,
+      cwd: typeof body.cwd === "string" ? body.cwd : undefined,
+      limit: typeof body.limit === "number" ? body.limit : undefined,
+    });
+
+    return c.json(result);
   });
 
   app.post("/remember", async (c) => {

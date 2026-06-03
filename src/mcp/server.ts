@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import { saveMemory, searchMemories } from "../db/memories.js";
 import { flagStaleMemories } from "../grounding/staleness.js";
+import { activateMemory } from "../memory/activate.js";
 import { remember } from "../write/remember.js";
 
 export function createMemoryMcpServer(): McpServer {
@@ -10,6 +11,50 @@ export function createMemoryMcpServer(): McpServer {
     name: "repo-grounded-memory-engine",
     version: "0.1.0",
   });
+
+  server.registerTool(
+    "memory.activate",
+    {
+      description: "Activate memory for the current chat/project and return relevant project context plus session instructions.",
+      inputSchema: {
+        task: z.string().optional(),
+        scope: z.string().optional(),
+        cwd: z.string().optional(),
+        limit: z.number().int().positive().max(20).optional(),
+      },
+      outputSchema: {
+        activated: z.boolean(),
+        scope: z.string(),
+        repo: z.object({
+          repo: z.string(),
+          branch: z.string(),
+          commit: z.string(),
+        }).optional(),
+        query: z.string(),
+        memories: z.array(
+          z.object({
+            id: z.string(),
+            type: z.string(),
+            scope: z.string(),
+            content: z.string(),
+            rank: z.number(),
+            createdAt: z.string(),
+          }),
+        ),
+        dashboardUrl: z.string(),
+        instructions: z.array(z.string()),
+      },
+    },
+    async ({ task, scope, cwd, limit }) => {
+      const result = await activateMemory({ task, scope, cwd, limit });
+      const structuredContent: Record<string, unknown> = { ...result };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+        structuredContent,
+      };
+    },
+  );
 
   server.registerTool(
     "memory.save",

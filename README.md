@@ -179,7 +179,15 @@ Add this MCP server to your agent config:
 }
 ```
 
-Verify `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list.
+Verify `memory.activate`, `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list.
+
+In a normal chat window, say:
+
+```txt
+Activate memory for this project with task "build a simple todo list web app". Search memory first. While building, remember durable decisions and completed changes.
+```
+
+See [docs/CHAT_ACTIVATION.md](docs/CHAT_ACTIVATION.md) for the full chat workflow.
 
 For the real Codex todo-app integration test with Gemini, follow [docs/CODEX_REAL_SCENARIO.md](docs/CODEX_REAL_SCENARIO.md).
 
