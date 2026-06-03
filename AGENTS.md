@@ -20,6 +20,7 @@ Rules:
 - Prefer concrete schema and DDL over prose when changing persistence-heavy behavior.
 - Commit at every green test so memory regressions have clean bisect points.
 - Build the differentiating pieces here: schema, RRF, memory ops, bi-temporal graph logic, repo grounding, consolidation, and evals. Outsource commodity model calls through providers.
+- Outsource Graphify-style use-case graph building; keep this repo focused on repo-grounded memory, graph persistence, retrieval, and validation.
 - Do not add new infrastructure casually: Postgres plus provider APIs should cover vector, graph, embeddings, reranking, jobs, and MCP until the design proves it needs more.
 
 Commands:

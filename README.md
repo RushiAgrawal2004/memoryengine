@@ -153,7 +153,7 @@ Start the daemon and open `http://localhost:3777/viewer` to inspect Memories, En
 
 ## Build Rules
 
-Work one step per session, write the test with the code, and commit at every green test. Feed schema instead of prose when persistence is involved. Build the parts that make this project distinct: RRF, memory ops, bi-temporal graph behavior, repo grounding, consolidation, and evals. Keep commodity pieces behind providers so hosted APIs can become local models later.
+Work one step per session, write the test with the code, and commit at every green test. Feed schema instead of prose when persistence is involved. Build the parts that make this project distinct: RRF, memory ops, bi-temporal graph behavior, repo grounding, consolidation, and evals. Keep commodity pieces behind providers so hosted APIs can become local models later. Outsource Graphify-style use-case graph building; this repo owns the repo-grounded memory layer, not a general use-case graph builder.
 
 ## Agent Setup
 
