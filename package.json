@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "memoryengine": "dist/src/cli.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "mcp": "tsx src/mcp/server.ts",
+    "cli": "tsx src/cli.ts",
     "build": "tsc",
     "test": "vitest",
     "db:generate": "drizzle-kit generate",

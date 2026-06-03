@@ -105,6 +105,19 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
   return app;
 }
 
+export function startHttpServer(): void {
+  serve(
+    {
+      fetch: createApp().fetch,
+      port: config.port,
+    },
+    (info) => {
+      console.log(`memory-engine listening on http://localhost:${info.port}`);
+      console.log(`viewer available at http://localhost:${info.port}/viewer`);
+    },
+  );
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   if (process.argv.includes("--stdio")) {
     runStdioServer().catch((error) => {
@@ -112,14 +125,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       process.exit(1);
     });
   } else {
-    serve(
-      {
-        fetch: createApp().fetch,
-        port: config.port,
-      },
-      (info) => {
-        console.log(`memory-engine listening on http://localhost:${info.port}`);
-      },
-    );
+    startHttpServer();
   }
 }

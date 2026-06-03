@@ -11,6 +11,16 @@ npm install
 npm run dev
 ```
 
+Install the local CLI:
+
+```sh
+npm run build
+npm install -g .
+memoryengine
+memoryengine demo --reset
+memoryengine connect codex
+```
+
 This repo defaults to your local PostgreSQL service:
 
 ```sh
