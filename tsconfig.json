@@ -11,5 +11,5 @@
     "rootDir": ".",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "drizzle.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "eval/**/*.ts", "drizzle.config.ts"]
 }

@@ -81,6 +81,10 @@ export class LocalHeuristicLLM implements LLM {
       return schema.parse(revalidatePayload(user));
     }
 
+    if (lowerSystem.includes("evaluation judge")) {
+      return schema.parse(evaluationJudgePayload(user));
+    }
+
     if (lowerSystem.includes("memory operation")) {
       return schema.parse(memoryOpPayload(user));
     }
@@ -213,6 +217,21 @@ function revalidatePayload(user: string): unknown {
   }
 
   return { op: "INVALIDATE", content: memory };
+}
+
+function evaluationJudgePayload(user: string): unknown {
+  const context = valueBetween(user, "Retrieved context:", "Expected answer keywords:");
+  const keywordsJson = valueAfter(user, "Expected answer keywords:");
+  const keywords = safeJsonParse<string[]>(keywordsJson, []);
+  const contextLower = context.toLowerCase();
+  const missing = keywords.filter((keyword) => !contextLower.includes(keyword.toLowerCase()));
+
+  return {
+    correct: missing.length === 0,
+    rationale: missing.length === 0
+      ? "Retrieved context contains the expected answer keywords."
+      : `Missing expected keywords: ${missing.join(", ")}`,
+  };
 }
 
 function summarizeEpisodes(user: string): string {
