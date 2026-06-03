@@ -1,4 +1,5 @@
 import { getSqlClient } from "../db/client.js";
+import { hasEmbeddingVectorColumn, vectorLiteral } from "../db/embedding-vectors.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 
 export interface RecallResult {
@@ -28,6 +29,10 @@ export async function vectorRecall(
   asOf?: Date,
 ): Promise<RecallResult[]> {
   const [queryEmbedding] = await getEmbeddings().embed([query]);
+  if (await hasEmbeddingVectorColumn("memories")) {
+    return pgVectorRecall(queryEmbedding, scope, k, asOf);
+  }
+
   const sql = getSqlClient();
 
   const rows = asOf
@@ -106,6 +111,80 @@ export async function vectorRecall(
     .filter((row) => row.rank > 0)
     .sort((a, b) => b.rank - a.rank)
     .slice(0, k);
+}
+
+async function pgVectorRecall(
+  queryEmbedding: number[],
+  scope: string | undefined,
+  k: number,
+  asOf?: Date,
+): Promise<RecallResult[]> {
+  const sql = getSqlClient();
+  const vector = vectorLiteral(queryEmbedding);
+
+  return asOf
+    ? scope
+      ? await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            (1 - (embedding_vector <=> ${vector}::vector))::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where scope = ${scope}
+            and embedding_vector is not null
+            and (t_valid is null or t_valid <= ${asOf})
+            and (t_invalid is null or t_invalid > ${asOf})
+          order by embedding_vector <=> ${vector}::vector
+          limit ${k}
+        `
+      : await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            (1 - (embedding_vector <=> ${vector}::vector))::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where embedding_vector is not null
+            and (t_valid is null or t_valid <= ${asOf})
+            and (t_invalid is null or t_invalid > ${asOf})
+          order by embedding_vector <=> ${vector}::vector
+          limit ${k}
+        `
+    : scope
+      ? await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            (1 - (embedding_vector <=> ${vector}::vector))::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where status = 'active'
+            and scope = ${scope}
+            and embedding_vector is not null
+          order by embedding_vector <=> ${vector}::vector
+          limit ${k}
+        `
+      : await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            (1 - (embedding_vector <=> ${vector}::vector))::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where status = 'active'
+            and embedding_vector is not null
+          order by embedding_vector <=> ${vector}::vector
+          limit ${k}
+        `;
 }
 
 export async function ftsRecall(

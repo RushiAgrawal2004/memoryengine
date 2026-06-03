@@ -1,4 +1,5 @@
 import { getSqlClient, closeDb } from "../db/client.js";
+import { syncMemoryVector } from "../db/embedding-vectors.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 
 const BATCH_SIZE = 100;
@@ -34,6 +35,7 @@ async function backfillEmbeddings(): Promise<number> {
         set embedding = ${sql.json(vectors[i])}
         where id = ${rows[i].id}
       `;
+      await syncMemoryVector(rows[i].id, vectors[i]);
       updated += 1;
     }
   }

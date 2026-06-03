@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { getSqlClient } from "../db/client.js";
+import { syncEdgeVector } from "../db/embedding-vectors.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
 import { Entity } from "./entities.js";
@@ -55,7 +56,7 @@ export async function writeEdge(input: GraphRelationWrite): Promise<WrittenEdge>
 
   const [embedding] = await getEmbeddings().embed([input.fact]);
 
-  return sql.begin(async (tx) => {
+  const written = await sql.begin(async (tx) => {
     if (contradiction.contradicts && contradiction.targetId) {
       await tx`
         update edges
@@ -96,4 +97,7 @@ export async function writeEdge(input: GraphRelationWrite): Promise<WrittenEdge>
       invalidatedEdgeId: contradiction.targetId,
     };
   });
+  await syncEdgeVector(written.id, embedding);
+
+  return written;
 }

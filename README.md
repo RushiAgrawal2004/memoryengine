@@ -34,7 +34,7 @@ curl -X POST http://localhost:3777/save -H "Content-Type: application/json" -d "
 curl -X POST http://localhost:3777/search -H "Content-Type: application/json" -d "{\"query\":\"package manager\",\"scope\":\"project:memory-engine\"}"
 ```
 
-For now, embeddings are stored as JSON vectors so the local database works without pgvector. Hybrid retrieval combines vector recall, full-text recall, graph recall, RRF fusion, and optional reranking; pgvector can replace the local JSON-vector path later.
+Embeddings are stored as JSON vectors for local fallback and, when pgvector is available, mirrored into `embedding_vector` columns for database-side cosine recall. Hybrid retrieval combines vector recall, full-text recall, graph recall, RRF fusion, and optional reranking.
 
 ## Hybrid Retrieval
 
@@ -43,6 +43,15 @@ The local default uses deterministic local embeddings and no reranker, so it wor
 ```sh
 npm run embeddings:backfill
 ```
+
+On Neon or any PostgreSQL server with pgvector available, apply migrations to enable database-side vector recall:
+
+```sh
+npm run db:migrate
+npm run embeddings:backfill
+```
+
+The pgvector migration is optional-safe: if the extension is unavailable, the JSON-vector fallback remains active.
 
 To use hosted embeddings, set:
 
@@ -110,12 +119,14 @@ Run the local coding-memory benchmark:
 npm run eval
 ```
 
-Current local result:
+Current local smoke result:
 
 | Mode | Items | Probes | Recall@k | Answer accuracy | p50 latency | p95 latency |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | without-memory | 3 | 3 | 0% | 0% | 0ms | 0ms |
-| with-memory | 3 | 3 | 100% | 100% | 2ms | 2ms |
+| with-memory | 3 | 3 | 100% | 100% | 3ms | 5ms |
+
+This table proves the eval harness and memory plumbing work; it is not a public product benchmark yet. A credible benchmark still needs a fair no-store baseline with the same recent session context plus larger datasets such as LoCoMo or LongMemEval.
 
 Start the daemon and open `http://localhost:3777/viewer` to inspect Memories, Entities, Edges, and Episodes.
 

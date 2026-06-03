@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { getSqlClient } from "../db/client.js";
+import { syncMemoryVector } from "../db/embedding-vectors.js";
 import type { Anchor } from "../db/schema.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
@@ -168,6 +169,22 @@ export async function ingestFacts(
 
     return results;
   });
+
+  embeddingIndex = 0;
+  for (const decision of decisions) {
+    if (decision.op === "NOOP") {
+      continue;
+    }
+
+    const appliedDecision = applied.find((item) => item.fact === decision.fact);
+    const memoryId = appliedDecision?.memoryId;
+    const embedding = embeddings[embeddingIndex];
+    embeddingIndex += 1;
+
+    if (memoryId && embedding) {
+      await syncMemoryVector(memoryId, embedding);
+    }
+  }
 
   if (ctx.entities?.length || ctx.relations?.length) {
     await writeGraph({

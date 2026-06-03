@@ -1,4 +1,5 @@
 import { getSqlClient } from "./client.js";
+import { syncMemoryVector } from "./embedding-vectors.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { currentRepoRef, projectScope } from "../grounding/git.js";
 import { retrieve } from "../read/retrieve.js";
@@ -52,6 +53,7 @@ export async function saveMemory(input: SaveMemoryInput): Promise<SavedMemory> {
     )
     returning id
   `;
+  await syncMemoryVector(row.id, embedding);
 
   return row;
 }

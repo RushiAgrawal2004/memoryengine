@@ -1,4 +1,5 @@
 import { getSqlClient } from "../db/client.js";
+import { syncEntityVector } from "../db/embedding-vectors.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 
 export interface Entity {
@@ -62,6 +63,7 @@ export async function upsertEntity(
     do update set attrs = excluded.attrs
     returning id, scope, kind, name
   `;
+  await syncEntityVector(created.id, embedding);
 
   return created;
 }
