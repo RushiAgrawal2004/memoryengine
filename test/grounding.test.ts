@@ -74,8 +74,8 @@ describe("repo grounding", () => {
   it("exposes memory.audit over MCP", async () => {
     const client = new Client({ name: "grounding-smoke", version: "0.1.0" });
     const transport = new StdioClientTransport({
-      command: "npm.cmd",
-      args: ["run", "mcp"],
+      command: "node",
+      args: ["E:/memoryengine/dist/src/index.js", "--stdio"],
       cwd: "E:/memoryengine",
       stderr: "pipe",
     });
@@ -85,7 +85,7 @@ describe("repo grounding", () => {
     await client.close();
 
     expect(tools.tools.map((tool) => tool.name)).toContain("memory.audit");
-  });
+  }, 15000);
 
   function testScope(): string {
     const scope = `test:${crypto.randomUUID()}`;

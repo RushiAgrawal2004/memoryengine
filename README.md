@@ -116,9 +116,8 @@ Add this MCP server to your agent config:
 {
   "mcpServers": {
     "memory-engine": {
-      "command": "npm",
-      "args": ["run", "mcp"],
-      "cwd": "E:/memoryengine",
+      "command": "node",
+      "args": ["E:/memoryengine/dist/src/index.js", "--stdio"],
       "env": {
         "DATABASE_URL": "postgres://memory_engine:memory_engine@localhost:5432/memory_engine"
       }
