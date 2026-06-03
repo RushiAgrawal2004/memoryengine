@@ -34,7 +34,7 @@ curl -X POST http://localhost:3777/save -H "Content-Type: application/json" -d "
 curl -X POST http://localhost:3777/search -H "Content-Type: application/json" -d "{\"query\":\"package manager\",\"scope\":\"project:memory-engine\"}"
 ```
 
-For now, embeddings are stored as JSON placeholders so the initial local database works without pgvector. The first retrieval phase uses keyword search only; pgvector can be added later when you want semantic search.
+For now, embeddings are stored as JSON vectors so the local database works without pgvector. Hybrid retrieval combines vector recall, full-text recall, graph recall, RRF fusion, and optional reranking; pgvector can replace the local JSON-vector path later.
 
 ## Hybrid Retrieval
 
@@ -118,6 +118,31 @@ Current local result:
 | with-memory | 3 | 3 | 100% | 100% | 2ms | 2ms |
 
 Start the daemon and open `http://localhost:3777/viewer` to inspect Memories, Entities, Edges, and Episodes.
+
+## Build Backlog
+
+- [x] 3.0 Write AGENTS.md
+- [x] 0.1 Project init + Hono + Drizzle + /health
+- [x] 0.2 Full schema + migration
+- [x] 0.3 MCP memory.save / memory.search (FTS only) - SHIP v0.1.0
+- [x] 1.1 Embeddings provider + backfill
+- [x] 1.2 Vector recall + RRF fusion
+- [x] 1.3 Cohere reranker + retrieve() pipeline - SHIP v0.2.0
+- [x] 2.1 LLM provider + fact extraction
+- [x] 2.2 ADD/UPDATE/INVALIDATE/NOOP writer + memory.remember
+- [x] 3.1 Entity extraction + resolution
+- [x] 3.2 Bi-temporal edges + invalidation
+- [x] 3.3 Graph-seeded recall + asOf time-travel - SHIP v0.3.0
+- [x] 4.1 Capture repo refs (git grounding)
+- [x] 4.2 Anchors + mechanical staleness + memory.audit
+- [x] 5.0 Consolidation loop (reflect/decay/revalidate) - SHIP v0.4.0
+- [x] 6.0 Claude Code + Codex hooks (auto-capture)
+- [x] 7.1 Eval harness (with vs without) - SHIP v0.5.0 + benchmark
+- [x] 7.2 Viewer
+
+## Build Rules
+
+Work one step per session, write the test with the code, and commit at every green test. Feed schema instead of prose when persistence is involved. Build the parts that make this project distinct: RRF, memory ops, bi-temporal graph behavior, repo grounding, consolidation, and evals. Keep commodity pieces behind providers so hosted APIs can become local models later.
 
 ## Agent Setup
 
