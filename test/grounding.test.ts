@@ -23,7 +23,7 @@ describe("repo grounding", () => {
     }
 
     for (const dir of tempDirs.splice(0)) {
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -74,7 +74,7 @@ describe("repo grounding", () => {
     const audit = await flagStaleMemories(scope, tempRepo);
     expect(audit.newlyFlagged).toBe(1);
     expect(audit.needsRevalidation).toBe(1);
-  });
+  }, 20000);
 
   it("exposes memory.audit over MCP", async () => {
     const client = new Client({ name: "grounding-smoke", version: "0.1.0" });

@@ -3,3 +3,6 @@ dist/
 .env
 .env.local
 *.log
+eval/results/*.json
+eval/results/*.md
+!eval/results/.gitkeep
