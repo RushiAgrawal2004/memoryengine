@@ -14,6 +14,7 @@ interface EntityCandidate extends Entity {
 }
 
 const SIMILARITY_THRESHOLD = 0.94;
+let warnedNonSemanticDedup = false;
 
 export async function upsertEntity(
   scope: string,
@@ -36,24 +37,33 @@ export async function upsertEntity(
     return exact;
   }
 
-  const [embedding] = await getEmbeddings().embed([name]);
-  const candidates = await sql<EntityCandidate[]>`
-    select id, scope, kind, name, embedding
-    from entities
-    where scope = ${scope}
-      and kind = ${kind}
-      and embedding is not null
-  `;
+  const embeddings = getEmbeddings();
+  const [embedding] = await embeddings.embed([name]);
 
-  const similar = candidates
-    .map((candidate) => ({
-      candidate,
-      score: cosineSimilarity(embedding, candidate.embedding ?? []),
-    }))
-    .sort((a, b) => b.score - a.score)[0];
+  if (embeddings.semantic) {
+    const candidates = await sql<EntityCandidate[]>`
+      select id, scope, kind, name, embedding
+      from entities
+      where scope = ${scope}
+        and kind = ${kind}
+        and embedding is not null
+    `;
 
-  if (similar && similar.score >= SIMILARITY_THRESHOLD) {
-    return similar.candidate;
+    const similar = candidates
+      .map((candidate) => ({
+        candidate,
+        score: cosineSimilarity(embedding, candidate.embedding ?? []),
+      }))
+      .sort((a, b) => b.score - a.score)[0];
+
+    if (similar && similar.score >= SIMILARITY_THRESHOLD) {
+      return similar.candidate;
+    }
+  } else if (!warnedNonSemanticDedup) {
+    console.warn(
+      "[memory-engine] embeddings provider is non-semantic; skipping entity similarity dedup.",
+    );
+    warnedNonSemanticDedup = true;
   }
 
   const [created] = await sql<Entity[]>`

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { closeDb, getSqlClient } from "../src/db/client.js";
 import { decayPass, reflectPass, revalidatePass, runConsolidationOnce } from "../src/consolidate/loop.js";
+import { setEmbeddingsForTest } from "../src/providers/embeddings.js";
 
 describe("consolidation loop", () => {
   const scopes: string[] = [];
@@ -11,6 +12,7 @@ describe("consolidation loop", () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    setEmbeddingsForTest(undefined);
     const sql = getSqlClient();
     for (const scope of scopes.splice(0)) {
       await sql`delete from memories where scope = ${scope}`;
@@ -31,6 +33,7 @@ describe("consolidation loop", () => {
     vi.setSystemTime(new Date("2026-06-03T00:00:00.000Z"));
     const scope = testScope();
     const sql = getSqlClient();
+    useConstantEmbeddings(true);
 
     for (let i = 0; i < 20; i += 1) {
       await sql`
@@ -68,12 +71,44 @@ describe("consolidation loop", () => {
     expect(episodeCount.count).toBe(20);
   });
 
+  it("skips reflection clustering when embeddings are non-semantic", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-03T00:00:00.000Z"));
+    const scope = testScope();
+    const sql = getSqlClient();
+    const embed = vi.fn(async (texts: string[]) => texts.map(() => [1, 0, 0]));
+    const logs: string[] = [];
+    setEmbeddingsForTest({ semantic: false, embed });
+
+    await sql`
+      insert into episodes (scope, kind, content, source, occurred_at)
+      values
+        (${scope}, 'message', 'auth token validation follows middleware pattern', 'test', ${new Date()}),
+        (${scope}, 'message', 'middleware validates auth tokens consistently', 'test', ${new Date()})
+    `;
+
+    const result = await reflectPass({
+      scope,
+      episodeLimit: 2,
+      logger: { log: (message) => logs.push(message) },
+    });
+    const [memoryCount] = await sql<Array<{ count: number }>>`
+      select count(*)::int as count from memories where scope = ${scope}
+    `;
+
+    expect(result).toEqual({ name: "REFLECT", checked: 2, changed: 0 });
+    expect(embed).not.toHaveBeenCalled();
+    expect(memoryCount.count).toBe(0);
+    expect(logs.join("\n")).toContain("semantic clustering disabled");
+  });
+
   it("decays unused memories and archives those below the floor", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const now = new Date("2026-06-03T00:00:00.000Z");
     vi.setSystemTime(now);
     const scope = testScope();
     const sql = getSqlClient();
+    useConstantEmbeddings(true);
 
     await sql`
       insert into memories (type, scope, content, confidence, status, created_at)
@@ -143,6 +178,7 @@ describe("consolidation loop", () => {
     vi.setSystemTime(new Date("2026-06-03T00:00:00.000Z"));
     const scope = testScope();
     const sql = getSqlClient();
+    useConstantEmbeddings(true);
 
     await sql`
       insert into episodes (scope, kind, content, source, occurred_at)
@@ -162,6 +198,13 @@ describe("consolidation loop", () => {
     const scope = `test:${crypto.randomUUID()}`;
     scopes.push(scope);
     return scope;
+  }
+
+  function useConstantEmbeddings(semantic: boolean): void {
+    setEmbeddingsForTest({
+      semantic,
+      embed: async (texts) => texts.map(() => [1, 0, 0]),
+    });
   }
 });
 

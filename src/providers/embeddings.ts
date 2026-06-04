@@ -1,6 +1,7 @@
 import { config } from "../lib/config.js";
 
 export interface Embeddings {
+  readonly semantic: boolean;
   embed(texts: string[]): Promise<number[][]>;
 }
 
@@ -12,6 +13,8 @@ const BATCH_SIZE = 100;
 const LOCAL_DIMENSIONS = 256;
 
 export class HostedEmbeddings implements Embeddings {
+  readonly semantic = true;
+
   constructor(
     private readonly apiKey = config.embeddingsApiKey,
     private readonly model = config.embeddingsModel,
@@ -58,6 +61,8 @@ export class HostedEmbeddings implements Embeddings {
 }
 
 export class LocalEmbeddings implements Embeddings {
+  readonly semantic = false;
+
   async embed(texts: string[]): Promise<number[][]> {
     return texts.map((text) => normalize(vectorize(text)));
   }

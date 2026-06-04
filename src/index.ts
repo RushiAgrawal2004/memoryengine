@@ -8,6 +8,7 @@ import { config } from "./lib/config.js";
 import { activateMemory } from "./memory/activate.js";
 import { resolveMemoryScope } from "./memory/scope.js";
 import { runStdioServer } from "./mcp/server.js";
+import { getEmbeddings } from "./providers/embeddings.js";
 import { registerViewerRoutes } from "./viewer/routes.js";
 import { MemorySessionInvalidError, MemorySessionRequiredError, remember } from "./write/remember.js";
 
@@ -172,8 +173,14 @@ export function startHttpServer(): void {
       port: config.port,
     },
     (info) => {
+      const embeddings = getEmbeddings();
       console.log(`memory-engine listening on http://localhost:${info.port}`);
       console.log(`viewer available at http://localhost:${info.port}/viewer`);
+      console.log(
+        `embeddings provider: ${config.embeddingsProvider}; semantic similarity: ${
+          embeddings.semantic ? "enabled" : "disabled"
+        }`,
+      );
     },
   );
   server.on("error", (error: NodeJS.ErrnoException) => {

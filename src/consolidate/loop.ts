@@ -111,7 +111,16 @@ export async function reflectPass(
     return { name: "REFLECT", checked: 0, changed: 0 };
   }
 
-  const vectors = await getEmbeddings().embed(rows.map((row) => row.content));
+  const logger = options.logger ?? console;
+  const embeddings = getEmbeddings();
+  if (!embeddings.semantic) {
+    logger.log(
+      "[consolidate] REFLECT skipped: embeddings provider is non-semantic; semantic clustering disabled.",
+    );
+    return { name: "REFLECT", checked: rows.length, changed: 0 };
+  }
+
+  const vectors = await embeddings.embed(rows.map((row) => row.content));
   const clusters = clusterEpisodes(rows, vectors);
   let changed = 0;
 

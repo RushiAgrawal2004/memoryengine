@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HostedEmbeddings } from "../src/providers/embeddings.js";
+import { HostedEmbeddings, LocalEmbeddings } from "../src/providers/embeddings.js";
 
 describe("hosted embeddings provider", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("marks hosted embeddings as semantic and local embeddings as non-semantic", () => {
+    expect(new HostedEmbeddings("test-key").semantic).toBe(true);
+    expect(new LocalEmbeddings().semantic).toBe(false);
   });
 
   it("calls the configured hosted embeddings endpoint", async () => {
