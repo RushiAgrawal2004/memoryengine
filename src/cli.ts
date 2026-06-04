@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { chmod, copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { closeDb, checkDatabase } from "./db/client.js";
 import { getPgvectorDoctorReport } from "./db/embedding-vectors.js";
 import { searchMemories } from "./db/memories.js";
@@ -12,6 +15,7 @@ import { remember } from "./write/remember.js";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "start";
+const execFileAsync = promisify(execFile);
 
 async function main(): Promise<void> {
   switch (command) {
@@ -31,7 +35,7 @@ async function main(): Promise<void> {
       await runActivate();
       return;
     case "connect":
-      printConnect(args[1]);
+      await runConnect(args[1]);
       return;
     case "hook-test":
       await runHookTest();
@@ -113,6 +117,15 @@ async function runHookTest(): Promise<void> {
   console.log(JSON.stringify(payload, null, 2));
 }
 
+async function runConnect(agent: string | undefined): Promise<void> {
+  if ((agent ?? "codex") === "git") {
+    await installGitHook();
+    return;
+  }
+
+  printConnect(agent);
+}
+
 function printConnect(agent: string | undefined): void {
   const target = agent ?? "codex";
   const nodePath = slashPath(process.execPath);
@@ -151,6 +164,22 @@ function printConnect(agent: string | undefined): void {
     console.log(`node ${slashPath(root)}/hooks/claude-code/post-tool-use.mjs`);
     console.log(`node ${slashPath(root)}/hooks/claude-code/stop.mjs`);
   }
+}
+
+async function installGitHook(): Promise<void> {
+  const cwd = valueAfter("--cwd") ?? process.cwd();
+  const root = packageRoot();
+  const source = path.join(root, "hooks", "git", "post-commit");
+  const hookPath = (await git(["rev-parse", "--git-path", "hooks/post-commit"], cwd)).trim();
+  const destination = path.resolve(cwd, hookPath);
+
+  await mkdir(path.dirname(destination), { recursive: true });
+  await copyFile(source, destination);
+  await chmod(destination, 0o755).catch(() => undefined);
+
+  console.log(`Installed Memory Engine git post-commit hook: ${destination}`);
+  console.log(`It posts changed files to http://localhost:${config.port}/hook/git/post-commit`);
+  console.log("Set MEMORY_ENGINE_URL if your daemon uses a different URL.");
 }
 
 function packageRoot(): string {
@@ -243,6 +272,7 @@ Usage:
   memoryengine activate --task "build todo app"
   memoryengine connect codex
   memoryengine connect claude-code
+  memoryengine connect git
   memoryengine hook-test --scope "project:my-app"
   memoryengine doctor
 
@@ -263,6 +293,15 @@ async function resetScope(scope: string): Promise<void> {
 function valueAfter(flag: string): string | undefined {
   const index = args.indexOf(flag);
   return index === -1 ? undefined : args[index + 1];
+}
+
+async function git(args: string[], cwd: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return stdout;
 }
 
 main()

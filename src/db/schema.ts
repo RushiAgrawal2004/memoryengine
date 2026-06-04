@@ -33,6 +33,9 @@ export interface Anchor {
   path: string;
   symbol?: string;
   commit?: string;
+  startLine?: number;
+  endLine?: number;
+  symbolHash?: string;
 }
 
 export const chatSessions = pgTable(

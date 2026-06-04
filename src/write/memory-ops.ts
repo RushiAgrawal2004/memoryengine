@@ -8,6 +8,7 @@ import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
 import { writeGraph } from "../graph/write.js";
 import { currentRepoRef, projectScope } from "../grounding/git.js";
+import { hashSymbolInFile } from "../grounding/symbols.js";
 import { vectorRecall } from "../read/recall.js";
 import { retrieve } from "../read/retrieve.js";
 import { ExtractedEntity, ExtractedFact, ExtractedRelation } from "./extract.js";
@@ -54,7 +55,11 @@ export async function ingestFacts(
 ): Promise<AppliedMemoryOperation[]> {
   const repoRef = await currentRepoRef();
   const scope = ctx.scope ?? (repoRef ? await projectScope() : DEFAULT_SCOPE);
-  const anchors = anchorsFromEntities(ctx.entities ?? [], repoRef?.commit);
+  const anchors = await anchorsFromContext({
+    entities: ctx.entities ?? [],
+    relations: ctx.relations ?? [],
+    commit: repoRef?.commit,
+  });
   const limitedFacts = facts.slice(0, config.maxOpsPerRemember);
   const decisionSlots: Array<AppliedMemoryOperation | undefined> = [];
   const pending: Array<{
@@ -393,15 +398,18 @@ async function findExactActiveMemory(
   return row;
 }
 
-function anchorsFromEntities(
-  entities: ExtractedEntity[],
-  commit: string | undefined,
-): Anchor[] {
+async function anchorsFromContext(input: {
+  entities: ExtractedEntity[];
+  relations: ExtractedRelation[];
+  commit: string | undefined;
+}): Promise<Anchor[]> {
+  const { entities, relations, commit } = input;
   if (!commit) {
     return [];
   }
 
   const anchors = new Map<string, Anchor>();
+  const symbolFiles = symbolPathCandidates(relations);
 
   for (const entity of entities) {
     if (entity.kind === "file") {
@@ -412,13 +420,41 @@ function anchorsFromEntities(
     }
 
     if (entity.kind === "symbol") {
+      const path = symbolFiles.get(entity.name.toLowerCase()) ?? "";
+      const symbolData = path
+        ? await hashSymbolInFile(path, entity.name)
+        : undefined;
       anchors.set(`symbol:${entity.name}`, {
-        path: "",
+        path,
         symbol: entity.name,
         commit,
+        ...(symbolData ?? {}),
       });
     }
   }
 
   return [...anchors.values()];
+}
+
+function symbolPathCandidates(relations: ExtractedRelation[]): Map<string, string> {
+  const candidates = new Map<string, string>();
+
+  for (const relation of relations) {
+    const srcKind = relation.srcKind ?? kindForName(relation.srcName);
+    const dstKind = relation.dstKind ?? kindForName(relation.dstName);
+
+    if (srcKind === "file" && dstKind === "symbol") {
+      candidates.set(relation.dstName.toLowerCase(), relation.srcName);
+    }
+
+    if (dstKind === "file" && srcKind === "symbol") {
+      candidates.set(relation.srcName.toLowerCase(), relation.dstName);
+    }
+  }
+
+  return candidates;
+}
+
+function kindForName(name: string): string {
+  return /\.[cm]?[jt]sx?$|\.py$|\.go$|\.rs$/i.test(name) ? "file" : "symbol";
 }

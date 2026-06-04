@@ -1,0 +1,41 @@
+#!/usr/bin/env node
+const { execFile } = require("node:child_process");
+
+const baseUrl = process.env.MEMORY_ENGINE_URL || "http://localhost:3777";
+const timeoutMs = Number.parseInt(process.env.MEMORY_ENGINE_GIT_TIMEOUT_MS || "1500", 10);
+
+function git(args) {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { encoding: "utf8", windowsHide: true }, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+async function main() {
+  const cwd = (await git(["rev-parse", "--show-toplevel"])).trim() || process.cwd();
+  const changed = await git(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]);
+  const changedFiles = changed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (changedFiles.length === 0) {
+    return;
+  }
+
+  void fetch(`${baseUrl}/hook/git/post-commit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cwd, changedFiles }),
+    signal: AbortSignal.timeout(timeoutMs),
+  }).catch(() => undefined);
+
+  setTimeout(() => process.exit(0), 500).unref();
+}
+
+main().catch(() => undefined);

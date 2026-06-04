@@ -7,8 +7,11 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { closeDb, getSqlClient } from "../src/db/client.js";
+import { handleGitPostCommit } from "../src/grounding/post-commit.js";
 import { currentRepoRef, listChangedFiles, repoNameFromTopLevel } from "../src/grounding/git.js";
 import { flagStaleMemories } from "../src/grounding/staleness.js";
+import { hashSymbolInFile } from "../src/grounding/symbols.js";
+import { LocalHeuristicLLM, setLLMForTest } from "../src/providers/llm.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +20,7 @@ describe("repo grounding", () => {
   const tempDirs: string[] = [];
 
   afterEach(async () => {
+    setLLMForTest(undefined);
     const sql = getSqlClient();
     for (const scope of scopes.splice(0)) {
       await sql`delete from memories where scope = ${scope}`;
@@ -76,6 +80,136 @@ describe("repo grounding", () => {
     expect(audit.needsRevalidation).toBe(1);
   }, 20000);
 
+  it("flags symbol anchors only when the anchored symbol body changes", async () => {
+    const tempRepo = await makeTempRepo();
+    const scope = testScope();
+    const sql = getSqlClient();
+
+    await writeFile(
+      path.join(tempRepo, "auth.ts"),
+      [
+        "export function verifyToken(token: string) {",
+        "  return token.length > 0;",
+        "}",
+        "",
+        "export const unrelated = 1;",
+        "",
+      ].join("\n"),
+    );
+    await git(tempRepo, ["add", "auth.ts"]);
+    await git(tempRepo, ["commit", "-m", "add auth symbols"]);
+    const anchorCommit = (await git(tempRepo, ["rev-parse", "HEAD"])).trim();
+    const symbol = await hashSymbolInFile("auth.ts", "verifyToken", tempRepo);
+    expect(symbol).toBeTruthy();
+
+    await sql`
+      insert into memories (type, scope, content, anchors, status)
+      values (
+        'semantic',
+        ${scope},
+        'verifyToken rejects empty tokens',
+        ${sql.json([{
+          path: "auth.ts",
+          symbol: "verifyToken",
+          commit: anchorCommit,
+          ...symbol,
+        }] as never)},
+        'active'
+      )
+    `;
+
+    await writeFile(
+      path.join(tempRepo, "auth.ts"),
+      [
+        "export function verifyToken(token: string) {",
+        "  return token.length > 0;",
+        "}",
+        "",
+        "export const unrelated = 2;",
+        "",
+      ].join("\n"),
+    );
+    await git(tempRepo, ["add", "auth.ts"]);
+    await git(tempRepo, ["commit", "-m", "change unrelated symbol"]);
+
+    const unrelatedAudit = await flagStaleMemories(scope, tempRepo, ["auth.ts"]);
+    expect(unrelatedAudit.newlyFlagged).toBe(0);
+    expect(unrelatedAudit.needsRevalidation).toBe(0);
+
+    await writeFile(
+      path.join(tempRepo, "auth.ts"),
+      [
+        "export function verifyToken(token: string) {",
+        "  return token.startsWith('Bearer ');",
+        "}",
+        "",
+        "export const unrelated = 2;",
+        "",
+      ].join("\n"),
+    );
+    await git(tempRepo, ["add", "auth.ts"]);
+    await git(tempRepo, ["commit", "-m", "change verifyToken"]);
+
+    const symbolAudit = await flagStaleMemories(scope, tempRepo, ["auth.ts"]);
+    expect(symbolAudit.newlyFlagged).toBe(1);
+    expect(symbolAudit.needsRevalidation).toBe(1);
+  }, 20000);
+
+  it("handles git post-commit changed files for the affected repo scope", async () => {
+    setLLMForTest(new LocalHeuristicLLM());
+    const tempRepo = await makeTempRepo("post-commit-repo");
+    const scope = `project:${path.basename(tempRepo)}`;
+    scopes.push(scope);
+    const sql = getSqlClient();
+
+    await writeFile(
+      path.join(tempRepo, "auth.ts"),
+      [
+        "export function verifyToken(token: string) {",
+        "  return token.length > 0;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await git(tempRepo, ["add", "auth.ts"]);
+    await git(tempRepo, ["commit", "-m", "add auth"]);
+    const anchorCommit = (await git(tempRepo, ["rev-parse", "HEAD"])).trim();
+    const symbol = await hashSymbolInFile("auth.ts", "verifyToken", tempRepo);
+
+    await sql`
+      insert into memories (type, scope, content, anchors, status)
+      values (
+        'semantic',
+        ${scope},
+        'verifyToken accepts non-empty tokens',
+        ${sql.json([{ path: "auth.ts", symbol: "verifyToken", commit: anchorCommit, ...symbol }] as never)},
+        'active'
+      )
+    `;
+
+    await writeFile(
+      path.join(tempRepo, "auth.ts"),
+      [
+        "export function verifyToken(token: string) {",
+        "  return token.startsWith('Bearer ');",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await git(tempRepo, ["add", "auth.ts"]);
+    await git(tempRepo, ["commit", "-m", "tighten auth"]);
+
+    const result = await handleGitPostCommit({
+      cwd: tempRepo,
+      changedFiles: ["auth.ts"],
+    });
+
+    expect(result.scope).toBe(scope);
+    expect(result.audit.newlyFlagged).toBe(1);
+    expect(result.revalidate.checked).toBe(1);
+    expect(result.revalidate.changed).toBe(1);
+  }, 20000);
+
   it("exposes memory.audit over MCP", async () => {
     const client = new Client({ name: "grounding-smoke", version: "0.1.0" });
     const transport = new StdioClientTransport({
@@ -98,8 +232,8 @@ describe("repo grounding", () => {
     return scope;
   }
 
-  async function makeTempRepo(): Promise<string> {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "memoryengine-grounding-"));
+  async function makeTempRepo(prefix = "memoryengine-grounding"): Promise<string> {
+    const dir = await mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
     tempDirs.push(dir);
     await git(dir, ["init"]);
     await git(dir, ["config", "user.email", "test@example.com"]);

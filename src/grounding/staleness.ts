@@ -1,12 +1,15 @@
 import { getSqlClient } from "../db/client.js";
 import { latestFileCommit } from "./git.js";
+import { hashSymbolInFile } from "./symbols.js";
 
 interface AnchoredMemory {
   id: string;
   attrs: Record<string, unknown> | null;
   anchors: Array<{
     path?: string;
+    symbol?: string;
     commit?: string;
+    symbolHash?: string;
   }> | null;
 }
 
@@ -20,6 +23,7 @@ export interface MemoryAudit {
 export async function flagStaleMemories(
   scope: string,
   cwd = process.cwd(),
+  changedFiles?: string[],
 ): Promise<MemoryAudit> {
   const sql = getSqlClient();
   const memories = await sql<AnchoredMemory[]>`
@@ -31,9 +35,10 @@ export async function flagStaleMemories(
   `;
 
   let newlyFlagged = 0;
+  const changedFileSet = changedFiles ? normalizedFileSet(changedFiles) : undefined;
 
   for (const memory of memories) {
-    const stale = await isMemoryStale(memory, cwd);
+    const stale = await isMemoryStale(memory, cwd, changedFileSet);
     if (!stale) {
       continue;
     }
@@ -48,7 +53,9 @@ export async function flagStaleMemories(
       set attrs = ${sql.json(attrs as never)}
       where id = ${memory.id}
     `;
-    newlyFlagged += 1;
+    if (!memory.attrs?.needs_revalidation) {
+      newlyFlagged += 1;
+    }
   }
 
   return memoryAudit(scope, newlyFlagged);
@@ -82,12 +89,34 @@ export async function memoryAudit(
   };
 }
 
-async function isMemoryStale(memory: AnchoredMemory, cwd: string): Promise<boolean> {
+async function isMemoryStale(
+  memory: AnchoredMemory,
+  cwd: string,
+  changedFiles?: Set<string>,
+): Promise<boolean> {
   for (const anchor of memory.anchors ?? []) {
-    if (!anchor.path || !anchor.commit) {
+    if (!anchor.path) {
+      continue;
+    }
+    if (changedFiles && !changedFiles.has(normalizeFile(anchor.path))) {
       continue;
     }
 
+    if (anchor.symbol) {
+      if (!anchor.symbolHash) {
+        continue;
+      }
+
+      const current = await hashSymbolInFile(anchor.path, anchor.symbol, cwd);
+      if (!current || current.symbolHash !== anchor.symbolHash) {
+        return true;
+      }
+      continue;
+    }
+
+    if (!anchor.commit) {
+      continue;
+    }
     const latest = await latestFileCommit(anchor.path, cwd);
     if (latest && latest !== anchor.commit) {
       return true;
@@ -95,4 +124,12 @@ async function isMemoryStale(memory: AnchoredMemory, cwd: string): Promise<boole
   }
 
   return false;
+}
+
+function normalizedFileSet(files: string[]): Set<string> {
+  return new Set(files.map(normalizeFile));
+}
+
+function normalizeFile(file: string): string {
+  return file.replaceAll("\\", "/").replace(/^\.\/+/, "");
 }

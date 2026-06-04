@@ -5,6 +5,7 @@ import { checkDatabase } from "./db/client.js";
 import { saveMemory, searchMemories } from "./db/memories.js";
 import { getLatestActiveMemorySession, getMemorySession } from "./db/sessions.js";
 import { config } from "./lib/config.js";
+import { handleGitPostCommit } from "./grounding/post-commit.js";
 import { activateMemory } from "./memory/activate.js";
 import { resolveMemoryScope } from "./memory/scope.js";
 import { runStdioServer } from "./mcp/server.js";
@@ -178,6 +179,30 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
       }
       throw error;
     }
+  });
+
+  app.post("/hook/git/post-commit", async (c) => {
+    const body: {
+      cwd?: unknown;
+      scope?: unknown;
+      changedFiles?: unknown;
+    } = await c.req.json().catch(() => ({}));
+
+    const changedFiles = Array.isArray(body.changedFiles)
+      ? body.changedFiles.filter((item): item is string => typeof item === "string")
+      : [];
+    if (changedFiles.length === 0) {
+      return c.json({ accepted: false, reason: "no_changed_files" }, 202);
+    }
+
+    const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
+    const scope = typeof body.scope === "string" ? body.scope : undefined;
+
+    void handleGitPostCommit({ cwd, scope, changedFiles }).catch((error) => {
+      console.warn(`[memory-engine] git post-commit revalidation failed: ${String(error)}`);
+    });
+
+    return c.json({ accepted: true, changedFiles: changedFiles.length }, 202);
   });
 
   registerViewerRoutes(app);

@@ -19,6 +19,7 @@ npm install -g .
 memoryengine
 memoryengine demo --reset
 memoryengine connect codex
+memoryengine connect git
 ```
 
 This repo defaults to your local PostgreSQL service:
@@ -106,7 +107,7 @@ Search accepts an optional `asOf` ISO timestamp to answer time-travel queries ag
 
 Episodes and memories are stamped with `{ repo, branch, commit }` from the local git repo. When no scope is supplied, the engine derives `project:<repo>` automatically.
 
-File and symbol entities become memory anchors. Run `memory.audit({ scope })` to flag active memories whose anchored files changed after the anchor commit; flagged memories get `attrs.needs_revalidation = true`.
+File and symbol entities become memory anchors. Symbol anchors store `{ path, symbol, startLine, endLine, symbolHash }`, so `memory.audit({ scope })` flags a memory only when the anchored symbol body changes. Anchors without a symbol fall back to file-level commit checks. Flagged memories get `attrs.needs_revalidation = true`.
 
 ## Consolidation
 
@@ -244,3 +245,13 @@ To smoke-test automatic capture after activating a chat session:
 ```sh
 memoryengine hook-test --scope "project:MEMORY ENGINE TEST"
 ```
+
+## Git Staleness Hook
+
+Install a post-commit hook into the current repository:
+
+```sh
+memoryengine connect git
+```
+
+The hook posts the commit's changed files to `/hook/git/post-commit` with a short timeout. The engine derives the repo scope, runs symbol-aware staleness checks for affected anchors only, then runs RE-VALIDATE for flagged memories in that scope.

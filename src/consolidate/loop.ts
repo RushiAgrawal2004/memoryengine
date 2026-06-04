@@ -7,6 +7,7 @@ import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
 import { config } from "../lib/config.js";
 import { latestFileCommit } from "../grounding/git.js";
+import { hashSymbolInFile } from "../grounding/symbols.js";
 import { ingestFacts } from "../write/memory-ops.js";
 import { ExtractedFact } from "../write/extract.js";
 
@@ -22,6 +23,7 @@ export interface ConsolidationOptions {
   decayDays?: number;
   decayFloor?: number;
   cwd?: string;
+  changedFiles?: string[];
   logger?: ConsolidationLogger;
 }
 
@@ -48,7 +50,14 @@ interface StaleMemoryRow {
   scope: string;
   content: string;
   attrs: Record<string, unknown> | null;
-  anchors: Array<{ path?: string; symbol?: string; commit?: string }> | null;
+  anchors: Array<{
+    path?: string;
+    symbol?: string;
+    commit?: string;
+    startLine?: number;
+    endLine?: number;
+    symbolHash?: string;
+  }> | null;
 }
 
 const CLUSTER_THRESHOLD = 0.7;
@@ -210,6 +219,7 @@ export async function revalidatePass(
 ): Promise<PassResult> {
   const sql = getSqlClient();
   const cwd = options.cwd ?? process.cwd();
+  const changedFiles = options.changedFiles ? normalizedFileSet(options.changedFiles) : undefined;
   const rows = options.scope
     ? await sql<StaleMemoryRow[]>`
         select id, scope, content, attrs, anchors
@@ -225,13 +235,17 @@ export async function revalidatePass(
           and coalesce((attrs->>'needs_revalidation')::boolean, false)
       `;
 
+  let checked = 0;
   let changed = 0;
 
   for (const row of rows) {
-    const anchor = row.anchors?.find((item) => item.path);
+    const anchor = row.anchors?.find((item) =>
+      item.path && (!changedFiles || changedFiles.has(normalizeFile(item.path)))
+    );
     if (!anchor?.path) {
       continue;
     }
+    checked += 1;
 
     const fileContent = await readFile(path.join(cwd, anchor.path), "utf8").catch(() => "");
     const decision = await getLLM().json(
@@ -246,11 +260,13 @@ export async function revalidatePass(
     );
 
     const attrs = { ...(row.attrs ?? {}), needs_revalidation: false };
+    const refreshedAnchors = await refreshAnchors(row.anchors ?? [], cwd);
 
     if (decision.op === "NOOP") {
       await sql`
         update memories
-        set attrs = ${sql.json(attrs as never)}
+        set attrs = ${sql.json(attrs as never)},
+            anchors = ${sql.json(refreshedAnchors as never)}
         where id = ${row.id}
       `;
       changed += 1;
@@ -258,17 +274,11 @@ export async function revalidatePass(
     }
 
     if (decision.op === "UPDATE") {
-      const latestCommit = await latestFileCommit(anchor.path, cwd);
-      const anchors = (row.anchors ?? []).map((item) =>
-        item.path === anchor.path && latestCommit
-          ? { ...item, commit: latestCommit }
-          : item,
-      );
       await sql`
         update memories
         set content = ${decision.content ?? row.content},
             attrs = ${sql.json(attrs as never)},
-            anchors = ${sql.json(anchors as never)},
+            anchors = ${sql.json(refreshedAnchors as never)},
             last_used_at = now()
         where id = ${row.id}
       `;
@@ -287,7 +297,34 @@ export async function revalidatePass(
     changed += 1;
   }
 
-  return { name: "RE-VALIDATE", checked: rows.length, changed };
+  return { name: "RE-VALIDATE", checked, changed };
+}
+
+async function refreshAnchors(
+  anchors: NonNullable<StaleMemoryRow["anchors"]>,
+  cwd: string,
+): Promise<NonNullable<StaleMemoryRow["anchors"]>> {
+  const refreshed = [];
+
+  for (const anchor of anchors) {
+    if (!anchor.path) {
+      refreshed.push(anchor);
+      continue;
+    }
+
+    const latestCommit = await latestFileCommit(anchor.path, cwd);
+    const symbolData = anchor.symbol
+      ? await hashSymbolInFile(anchor.path, anchor.symbol, cwd)
+      : undefined;
+
+    refreshed.push({
+      ...anchor,
+      ...(latestCommit ? { commit: latestCommit } : {}),
+      ...(symbolData ?? {}),
+    });
+  }
+
+  return refreshed;
 }
 
 async function newFactsOnly(scope: string, contents: string[]): Promise<ExtractedFact[]> {
@@ -367,6 +404,14 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
 
   return dot / (Math.sqrt(aMagnitude) * Math.sqrt(bMagnitude));
+}
+
+function normalizedFileSet(files: string[]): Set<string> {
+  return new Set(files.map(normalizeFile));
+}
+
+function normalizeFile(file: string): string {
+  return file.replaceAll("\\", "/").replace(/^\.\/+/, "");
 }
 
 if (process.argv.includes("--once")) {
