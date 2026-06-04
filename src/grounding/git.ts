@@ -19,7 +19,7 @@ export async function currentRepoRef(cwd = process.cwd()): Promise<RepoRef | und
     ]);
 
     return {
-      repo: path.basename(topLevel.trim()),
+      repo: repoNameFromTopLevel(topLevel, cwd),
       branch: branch.trim(),
       commit: commit.trim(),
     };
@@ -30,7 +30,7 @@ export async function currentRepoRef(cwd = process.cwd()): Promise<RepoRef | und
 
 export async function projectScope(cwd = process.cwd()): Promise<string> {
   const repoRef = await currentRepoRef(cwd);
-  return repoRef ? `project:${repoRef.repo}` : "global";
+  return repoRef ? `project:${repoRef.repo}` : `project:${path.basename(path.resolve(cwd))}`;
 }
 
 export async function listChangedFiles(
@@ -64,4 +64,9 @@ async function git(args: string[], cwd: string): Promise<string> {
   });
 
   return stdout;
+}
+
+export function repoNameFromTopLevel(topLevel: string, cwd = process.cwd()): string {
+  const normalized = topLevel.trim().replace(/[\\/]+$/, "");
+  return path.basename(normalized) || path.basename(path.resolve(cwd));
 }

@@ -7,7 +7,7 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { closeDb, getSqlClient } from "../src/db/client.js";
-import { currentRepoRef, listChangedFiles } from "../src/grounding/git.js";
+import { currentRepoRef, listChangedFiles, repoNameFromTopLevel } from "../src/grounding/git.js";
 import { flagStaleMemories } from "../src/grounding/staleness.js";
 
 const execFileAsync = promisify(execFile);
@@ -39,6 +39,11 @@ describe("repo grounding", () => {
 
     const changed = await listChangedFiles("HEAD~1");
     expect(Array.isArray(changed)).toBe(true);
+  });
+
+  it("derives repo names from git paths with trailing separators", () => {
+    expect(repoNameFromTopLevel("E:/MEMORY ENGINE TEST/")).toBe("MEMORY ENGINE TEST");
+    expect(repoNameFromTopLevel("E:\\memoryengine\\")).toBe("memoryengine");
   });
 
   it("flags anchored memories when the file changed after the anchor commit", async () => {

@@ -1,4 +1,7 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface Config {
   databaseUrl?: string;
@@ -30,6 +33,8 @@ const DEFAULT_CONSOLIDATE_CRON = "*/30 * * * *";
 const DEFAULT_REFLECT_EPISODE_LIMIT = 100;
 const DEFAULT_DECAY_DAYS = 30;
 const DEFAULT_DECAY_FLOOR = 0.2;
+
+loadEnvFiles();
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const rawPort = env.PORT;
@@ -65,6 +70,40 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 export const config = loadConfig();
+
+function loadEnvFiles(): void {
+  const cwdEnv = path.join(process.cwd(), ".env");
+  if (existsSync(cwdEnv)) {
+    dotenv.config({ path: cwdEnv, override: false });
+  }
+
+  const packageRoot = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
+  if (!packageRoot) {
+    return;
+  }
+
+  const packageEnv = path.join(packageRoot, ".env");
+  if (packageEnv !== cwdEnv && existsSync(packageEnv)) {
+    dotenv.config({ path: packageEnv, override: false });
+  }
+}
+
+function findPackageRoot(start: string): string | undefined {
+  let current = start;
+
+  while (true) {
+    if (existsSync(path.join(current, "package.json"))) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return undefined;
+    }
+
+    current = parent;
+  }
+}
 
 function parsePositiveInt(
   raw: string | undefined,
