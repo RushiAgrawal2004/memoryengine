@@ -10,6 +10,16 @@ describe("viewer routes", () => {
   it("serves the viewer page and tab data", async () => {
     const app = createApp();
     const scope = `test-viewer:${crypto.randomUUID()}`;
+    const activated = await app.request("/activate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scope,
+        task: "viewer data",
+        agent: "codex",
+      }),
+    });
+    const activation = (await activated.json()) as { session: { id: string } };
 
     await app.request("/remember", {
       method: "POST",
@@ -17,6 +27,7 @@ describe("viewer routes", () => {
       body: JSON.stringify({
         text: "viewer.ts calls renderViewer. renderViewer depends on hono.",
         scope,
+        sessionId: activation.session.id,
       }),
     });
 

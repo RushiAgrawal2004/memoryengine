@@ -91,6 +91,7 @@ Add this MCP server to Codex's MCP config:
 
 Restart Codex and verify these tools appear:
 
+- `memory.activate`
 - `memory.search`
 - `memory.remember`
 - `memory.audit`
@@ -100,14 +101,14 @@ Restart Codex and verify these tools appear:
 In Codex, ask:
 
 ```txt
-Use memory.search with scope project:todo-codex-demo first. Then build the simple todo list web app from the remembered requirements. After each meaningful change, call memory.remember with scope project:todo-codex-demo and save what you changed.
+Activate memory for this project with scope project:todo-codex-demo and task "build a simple todo list web app". Use the returned session.id for all memory.remember calls in this chat window. Search memory first, then build the app from the remembered requirements. After each meaningful change, call memory.remember with that session.id and save what changed.
 ```
 
 Expected behavior:
 
 - Codex searches memory before coding.
 - Codex builds the todo app with add, complete, delete, filters, and localStorage.
-- Codex remembers implementation decisions as it works.
+- Codex remembers implementation decisions only in the activated chat session.
 - The dashboard shows new memories and episodes under `project:todo-codex-demo`.
 
 ## 5. Pass Criteria
@@ -117,7 +118,7 @@ The integration passes if:
 - Codex can see the MCP tools.
 - `memory.search` returns todo requirements before coding.
 - Codex builds the app using those requirements.
-- `memory.remember` adds new facts during/after the build.
+- `memory.remember` adds new facts during/after the build using the activated session id.
 - The dashboard shows the todo scope updating live.
 
 If this fails, fix the first failing layer only: MCP visibility, Gemini API calls, DB writes, retrieval quality, or dashboard display.

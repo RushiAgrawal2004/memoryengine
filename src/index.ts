@@ -7,7 +7,7 @@ import { config } from "./lib/config.js";
 import { activateMemory } from "./memory/activate.js";
 import { runStdioServer } from "./mcp/server.js";
 import { registerViewerRoutes } from "./viewer/routes.js";
-import { remember } from "./write/remember.js";
+import { MemorySessionInvalidError, MemorySessionRequiredError, remember } from "./write/remember.js";
 
 export function createApp(options: { checkDatabase?: () => Promise<boolean> } = {}) {
   const app = new Hono();
@@ -95,13 +95,24 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
       return c.json({ error: "text is required" }, 400);
     }
 
-    const result = await remember({
-      text: body.text,
-      scope: typeof body.scope === "string" ? body.scope : undefined,
-      sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined,
-    });
+    try {
+      const result = await remember({
+        text: body.text,
+        scope: typeof body.scope === "string" ? body.scope : undefined,
+        sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined,
+        requireSession: true,
+      });
 
-    return c.json(result);
+      return c.json(result);
+    } catch (error) {
+      if (
+        error instanceof MemorySessionRequiredError ||
+        error instanceof MemorySessionInvalidError
+      ) {
+        return c.json({ error: error.message, code: error.code }, 400);
+      }
+      throw error;
+    }
   });
 
   registerViewerRoutes(app);

@@ -83,6 +83,9 @@ RERANK_MODEL=rerank-v3.5
 ## Intelligent Writes
 
 `memory.remember` captures an episode, extracts atomic facts, retrieves similar memories, and applies one of `ADD`, `UPDATE`, `INVALIDATE`, or `NOOP`.
+For agent-facing HTTP and MCP calls, `memory.remember` requires the `sessionId`
+returned by `memory.activate`, so storage is opt-in per chat window instead of
+global across every chat.
 
 The local default uses heuristic extraction and operation decisions, so it works without an API key. To use a hosted OpenAI-compatible LLM, set:
 
@@ -189,7 +192,7 @@ Add this MCP server to your agent config:
 }
 ```
 
-Verify `memory.activate`, `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list. `memory.activate` starts a saved chat session so multiple Codex/Claude sessions can be tracked under the same project scope.
+Verify `memory.activate`, `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list. `memory.activate` starts a saved chat session so multiple Codex/Claude sessions can be tracked under the same project scope. `memory.remember` must use that returned `session.id`; unactivated chat windows cannot write memory.
 
 In a normal chat window, say:
 
@@ -230,3 +233,7 @@ Codex hook config example:
 ```
 
 Set `MEMORY_ENGINE_URL=http://localhost:3777` if your daemon is not on the default URL. Capture hooks are fire-and-forget with a 1500ms abort and a 500ms escape hatch. Session-start recall uses `MEMORY_ENGINE_SEARCH_TIMEOUT_MS` and defaults to 50ms so it stays out of the prompt path.
+
+Capture hooks only write when `MEMORY_ENGINE_SESSION_ID` or an event-provided
+`sessionId` is present. Without an activated session id, hooks skip capture, so
+memory is not stored for every random chat.

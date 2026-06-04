@@ -66,6 +66,11 @@ export async function printSessionRecall(agentName) {
 
 export async function captureHookEvent(agentName, eventName) {
   const input = await readHookInput();
+  const sessionId = sessionIdFrom(input);
+  if (!sessionId) {
+    return;
+  }
+
   const text = formatEvent(agentName, eventName, input);
   if (!text) {
     return;
@@ -74,9 +79,19 @@ export async function captureHookEvent(agentName, eventName) {
   void postJson("/remember", {
     text,
     scope: scopeFrom(input),
+    sessionId,
   }, CAPTURE_TIMEOUT_MS).catch(() => undefined);
 
   setTimeout(() => process.exit(0), 500).unref();
+}
+
+function sessionIdFrom(input) {
+  return firstString(
+    process.env.MEMORY_ENGINE_SESSION_ID,
+    input.sessionId,
+    input.session_id,
+    input.memorySessionId,
+  );
 }
 
 function formatEvent(agentName, eventName, input) {

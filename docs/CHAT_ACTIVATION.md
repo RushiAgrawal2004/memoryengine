@@ -2,6 +2,11 @@
 
 This is the normal chat-window workflow.
 
+Memory is opt-in per chat window. A chat does not write memories until it calls
+`memory.activate`, and `memory.remember` must include the returned `session.id`.
+Other chats can search memory, but they cannot store into this chat's session
+unless they activate their own session.
+
 After the MCP server is connected, start a Codex or Claude chat and say:
 
 ```txt
@@ -18,7 +23,7 @@ The agent should call:
 
 1. `memory.activate`
 2. `memory.search` when it needs more context
-3. `memory.remember` after meaningful project decisions or code changes
+3. `memory.remember` with the returned `session.id` after meaningful project decisions or code changes
 4. `memory.audit` before relying on stale code-grounded facts
 
 The activation response includes:
@@ -39,6 +44,9 @@ http://localhost:3777/viewer
 Filter by the returned scope to see what the chat is remembering.
 
 Use the Sessions tab to see each activated chat window. Use the returned `session.id` on later `memory.remember` calls so new memories and episodes attach to the right session.
+
+If `/remember` or `memory.remember` is called without a `sessionId`, the engine
+rejects it. That prevents accidental storage from unrelated chat windows.
 
 ## MCP Config
 

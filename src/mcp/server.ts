@@ -139,15 +139,15 @@ export function createMemoryMcpServer(): McpServer {
   server.registerTool(
     "memory.remember",
     {
-      description: "Capture an episode, extract facts, and apply intelligent memory operations.",
+      description: "Capture an episode for the activated chat session, extract facts, and apply intelligent memory operations.",
       inputSchema: {
         text: z.string().min(1),
         scope: z.string().optional(),
-        sessionId: z.string().optional(),
+        sessionId: z.string().min(1),
       },
       outputSchema: {
         episodeId: z.string(),
-        sessionId: z.string().optional(),
+        sessionId: z.string(),
         facts: z.array(z.string()),
         operations: z.array(
           z.object({
@@ -165,7 +165,7 @@ export function createMemoryMcpServer(): McpServer {
       },
     },
     async ({ text, scope, sessionId }) => {
-      const result = await remember({ text, scope, sessionId });
+      const result = await remember({ text, scope, sessionId, requireSession: true });
       const structuredContent: Record<string, unknown> = { ...result };
 
       return {
