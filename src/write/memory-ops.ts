@@ -23,11 +23,18 @@ export interface IngestFactsContext {
   sourceSession?: string;
   entities?: ExtractedEntity[];
   relations?: ExtractedRelation[];
+  decisionLogger?: (event: MemoryOperationDecisionEvent) => void;
 }
 
 export interface AppliedMemoryOperation extends MemoryOperation {
   fact: string;
   memoryId?: string;
+}
+
+export interface MemoryOperationDecisionEvent {
+  fact: string;
+  candidates: Array<{ id: string; content: string }>;
+  decision: MemoryOperation;
 }
 
 const DEFAULT_SCOPE = "global";
@@ -43,22 +50,32 @@ export async function ingestFacts(
 
   for (const fact of facts) {
     const similar = await retrieve(fact.fact, scope, 5);
+    const candidates = similar.map((memory) => ({
+      id: memory.id,
+      content: memory.content,
+    }));
     const decision = await getLLM().json(
-      "You are a memory operation decider. Choose one memory operation for the new fact: ADD, UPDATE, INVALIDATE, or NOOP.",
+      [
+        "You are a memory operation decider for a coding-agent memory store.",
+        "Choose exactly one operation for the new fact.",
+        "ADD only when none of the candidate memories already represent the same subject/fact.",
+        "NOOP when the new fact is merely a restatement of an existing active memory.",
+        "UPDATE when the new fact keeps the same fact true but improves, clarifies, or adds useful detail.",
+        "INVALIDATE when the new fact contradicts, replaces, reverses, or says the project moved away from an existing memory.",
+        "For UPDATE, INVALIDATE, and NOOP, include targetId from the relevant candidate.",
+        "For INVALIDATE, content must be the new replacement memory that should supersede the old one.",
+        "Never create a duplicate ADD for a paraphrase of an existing memory.",
+      ].join(" "),
       [
         `Fact: ${fact.fact}`,
         "Existing memories:",
-        JSON.stringify(
-          similar.map((memory) => ({
-            id: memory.id,
-            content: memory.content,
-          })),
-        ),
+        JSON.stringify(candidates),
         "Return JSON with op, optional targetId, and content.",
       ].join("\n"),
       memoryOperationSchema,
     );
 
+    ctx.decisionLogger?.({ fact: fact.fact, candidates, decision });
     decisions.push({ ...decision, fact: fact.fact });
   }
 

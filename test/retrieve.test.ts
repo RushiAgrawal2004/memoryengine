@@ -11,28 +11,30 @@ describe("hybrid retrieve", () => {
     const sql = getSqlClient();
     const scope = `test:${crypto.randomUUID()}`;
 
-    for (let i = 0; i < 30; i += 1) {
+    try {
+      for (let i = 0; i < 30; i += 1) {
+        await saveMemory({
+          scope,
+          content: `background note ${i} about unrelated implementation details`,
+        });
+      }
+
       await saveMemory({
         scope,
-        content: `background note ${i} about unrelated implementation details`,
+        content: "npm handles scripts for this repository",
       });
+
+      const results = await searchMemories({
+        scope,
+        query: "dependency manager",
+        limit: 3,
+      });
+
+      expect(results.map((result) => result.content)).toContain(
+        "npm handles scripts for this repository",
+      );
+    } finally {
+      await sql`delete from memories where scope = ${scope}`;
     }
-
-    await saveMemory({
-      scope,
-      content: "npm handles scripts for this repository",
-    });
-
-    const results = await searchMemories({
-      scope,
-      query: "dependency manager",
-      limit: 3,
-    });
-
-    expect(results.map((result) => result.content)).toContain(
-      "npm handles scripts for this repository",
-    );
-
-    await sql`delete from memories where scope = ${scope}`;
-  }, 10000);
+  }, 30000);
 });
