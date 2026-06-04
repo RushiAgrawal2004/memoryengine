@@ -9,8 +9,8 @@ import { getLLM } from "../providers/llm.js";
 import { writeGraph } from "../graph/write.js";
 import { currentRepoRef, projectScope } from "../grounding/git.js";
 import { hashSymbolInFile } from "../grounding/symbols.js";
-import { vectorRecall } from "../read/recall.js";
-import { retrieve } from "../read/retrieve.js";
+import { rrf } from "../read/fuse.js";
+import { ftsRecall, RecallResult, vectorRecall } from "../read/recall.js";
 import { ExtractedEntity, ExtractedFact, ExtractedRelation } from "./extract.js";
 
 const memoryOperationSchema = z.object({
@@ -77,7 +77,7 @@ export async function ingestFacts(
   for (let factIndex = 0; factIndex < limitedFacts.length; factIndex += 1) {
     const fact = limitedFacts[factIndex];
     const localNoop = await findLocalNoopCandidate(fact.fact, scope);
-    const similar = await retrieve(fact.fact, scope, 5);
+    const similar = await recallMemoryCandidates(fact.fact, scope, 5);
     const candidates = similar.map((memory) => ({
       id: memory.id,
       content: memory.content,
@@ -104,6 +104,7 @@ export async function ingestFacts(
   if (pending.length > 0) {
     const batchDecisions = await decideMemoryOpsBatch(pending);
     const byIndex = new Map(batchDecisions.map((decision) => [decision.factIndex, decision]));
+    const rawDecisions: MemoryOperationDecisionEvent[] = [];
 
     for (const item of pending) {
       const batchDecision = byIndex.get(item.factIndex);
@@ -120,14 +121,19 @@ export async function ingestFacts(
             rationale: "LLM batch response omitted this fact; defaulted to ADD.",
           };
 
-      await recordDecision({
-        scope,
+      rawDecisions.push({
         fact: item.fact.fact,
         candidates: item.candidates,
         decision,
-        ctx,
       });
-      decisionSlots[item.factIndex] = { ...decision, fact: item.fact.fact };
+    }
+
+    for (const item of collapseDuplicateInvalidations(rawDecisions)) {
+      await recordDecision({ scope, ...item, ctx });
+      const factIndex = pending.find((pendingItem) => pendingItem.fact.fact === item.fact)?.factIndex;
+      if (factIndex !== undefined) {
+        decisionSlots[factIndex] = { ...item.decision, fact: item.fact };
+      }
     }
   }
 
@@ -351,6 +357,25 @@ async function recordDecision(input: {
   });
 }
 
+function collapseDuplicateInvalidations(
+  events: MemoryOperationDecisionEvent[],
+): MemoryOperationDecisionEvent[] {
+  const lastInvalidationByTarget = new Map<string, number>();
+  events.forEach((event, index) => {
+    if (event.decision.op === "INVALIDATE" && event.decision.targetId) {
+      lastInvalidationByTarget.set(event.decision.targetId, index);
+    }
+  });
+
+  return events.filter((event, index) => {
+    if (event.decision.op !== "INVALIDATE" || !event.decision.targetId) {
+      return true;
+    }
+
+    return lastInvalidationByTarget.get(event.decision.targetId) === index;
+  });
+}
+
 async function findLocalNoopCandidate(
   fact: string,
   scope: string,
@@ -396,6 +421,104 @@ async function findExactActiveMemory(
   `;
 
   return row;
+}
+
+async function recallMemoryCandidates(
+  fact: string,
+  scope: string,
+  k: number,
+): Promise<Array<{ id: string; content: string }>> {
+  const [vectorResults, ftsResults, keywordResults] = await Promise.all([
+    vectorRecall(fact, scope, k),
+    ftsRecall(fact, scope, k),
+    keywordMemoryRecall(fact, scope, k),
+  ]);
+
+  return rrf([vectorResults, ftsResults, keywordResults])
+    .slice(0, k)
+    .map((result) => ({
+      id: result.item.id,
+      content: result.item.content,
+    }));
+}
+
+async function keywordMemoryRecall(
+  fact: string,
+  scope: string,
+  k: number,
+): Promise<RecallResult[]> {
+  const sql = getSqlClient();
+  const rows = await sql<Array<{
+    id: string;
+    type: string;
+    scope: string;
+    content: string;
+    createdAt: string;
+  }>>`
+    select
+      id,
+      type,
+      scope,
+      content,
+      created_at::text as "createdAt"
+    from memories
+    where status = 'active'
+      and scope = ${scope}
+    order by created_at desc
+    limit 500
+  `;
+  const factTokens = meaningfulTokensForRecall(fact);
+
+  return rows
+    .map((row) => ({
+      ...row,
+      rank: tokenOverlapScore(factTokens, meaningfulTokensForRecall(row.content)),
+    }))
+    .filter((row) => row.rank > 0)
+    .sort((a, b) => b.rank - a.rank || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, k);
+}
+
+function tokenOverlapScore(queryTokens: string[], contentTokens: string[]): number {
+  if (queryTokens.length === 0 || contentTokens.length === 0) {
+    return 0;
+  }
+
+  const contentSet = new Set(contentTokens);
+  const shared = new Set(queryTokens.filter((token) => contentSet.has(token)));
+  return shared.size / queryTokens.length;
+}
+
+function meaningfulTokensForRecall(value: string): string[] {
+  const stopwords = new Set([
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "be",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "the",
+    "this",
+    "to",
+    "use",
+    "uses",
+    "we",
+  ]);
+
+  return [...new Set(
+    value
+      .toLowerCase()
+      .match(/[a-z0-9_.-]+/g)
+      ?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? [],
+  )];
 }
 
 async function anchorsFromContext(input: {

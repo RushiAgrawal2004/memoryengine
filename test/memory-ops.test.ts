@@ -8,6 +8,11 @@ import { ingestFacts } from "../src/write/memory-ops.js";
 
 class FakeOpsLLM implements LLM {
   calls = 0;
+  lastBatch: Array<{
+    factIndex: number;
+    fact: string;
+    candidates: Array<{ id: string; content?: string }>;
+  }> = [];
 
   async json<T>(_system: string, user: string, schema: z.ZodType<T>): Promise<T> {
     this.calls += 1;
@@ -18,6 +23,7 @@ class FakeOpsLLM implements LLM {
         fact: string;
         candidates: Array<{ id: string }>;
       }>;
+      this.lastBatch = batch;
 
       return schema.parse(batch.map((item) => ({
         factIndex: item.factIndex,
@@ -215,6 +221,42 @@ describe("ingestFacts", () => {
     expect(rows.map((row) => row.content)).toEqual(["keep one", "keep two"]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("MAX_OPS_PER_REMEMBER exceeded"));
     warn.mockRestore();
+  });
+
+  it("supplies lexical candidates for contradiction decisions when strict FTS misses them", async () => {
+    const scope = testScope();
+    const llm = new FakeOpsLLM();
+    setLLMForTest(llm);
+    await saveMemory({ scope, content: "The JavaScript package manager for this repository is npm." });
+
+    const operations = await ingestFacts(
+      [{ fact: "INVALIDATE: package manager moved to pnpm", temporalRefs: [] }],
+      { scope },
+    );
+
+    expect(llm.lastBatch[0]?.candidates.some((candidate) =>
+      candidate.content?.includes("npm")
+    )).toBe(true);
+    expect(operations[0]?.op).toBe("INVALIDATE");
+  });
+
+  it("collapses repeated INVALIDATE decisions against the same memory", async () => {
+    const scope = testScope();
+    await saveMemory({ scope, content: "The package manager for this repository is npm." });
+
+    const operations = await ingestFacts(
+      [
+        { fact: "INVALIDATE: we no longer use npm", temporalRefs: [] },
+        { fact: "INVALIDATE: package manager moved to pnpm", temporalRefs: [] },
+      ],
+      { scope },
+    );
+
+    const rows = await memoriesForScope(scope);
+    expect(operations.filter((operation) => operation.op === "INVALIDATE")).toHaveLength(1);
+    expect(rows.filter((row) => row.supersedes).map((row) => row.content)).toEqual([
+      "package manager moved to pnpm",
+    ]);
   });
 
   function testScope(): string {

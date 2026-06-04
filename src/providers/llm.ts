@@ -14,55 +14,394 @@ interface ChatCompletionsResponse {
   }>;
 }
 
+interface JsonSchemaHint {
+  type?: string;
+  [key: string]: unknown;
+}
+
+interface HostedLLMOptions {
+  maxRetries?: number;
+  retryDelayMs?: number;
+  timeoutMs?: number;
+}
+
 export class HostedLLM implements LLM {
   constructor(
     private readonly apiKey = config.llmApiKey,
     private readonly model = config.llmModel,
     private readonly baseUrl = config.llmBaseUrl,
+    private readonly options: HostedLLMOptions = {},
   ) {}
 
   async json<T>(system: string, user: string, schema: z.ZodType<T>): Promise<T> {
-    const content = await this.chat(
-      `${system}\nReturn only valid JSON matching the requested schema.`,
+    const jsonSchema = jsonSchemaFor(schema);
+    const content = await this.complete(
+      [
+        system,
+        "Return only valid JSON matching the requested schema.",
+        "Do not include markdown fences, prose, comments, or trailing commas.",
+        `The top-level JSON value must be ${topLevelDescription(jsonSchema)}.`,
+        `Schema: ${JSON.stringify(jsonSchema)}`,
+      ].join("\n"),
       user,
-      true,
+      responseFormatFor(jsonSchema),
     );
-    return schema.parse(JSON.parse(content));
+    return parseAndValidateJson(content, schema);
   }
 
-  async chat(system: string, user: string, jsonMode = false): Promise<string> {
+  async chat(system: string, user: string): Promise<string> {
+    return this.complete(system, user);
+  }
+
+  private async complete(
+    system: string,
+    user: string,
+    responseFormat?: Record<string, unknown>,
+  ): Promise<string> {
     if (!this.apiKey) {
       throw new Error("LLM_API_KEY is required for hosted LLM calls");
     }
 
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-      }),
-    });
+    const maxRetries = this.options.maxRetries ?? 2;
+    const retryDelayMs = this.options.retryDelayMs ?? 500;
+    let lastError: Error | undefined;
 
-    if (!response.ok) {
-      throw new Error(`LLM request failed: ${response.status} ${response.statusText}`);
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${this.apiKey}`,
+            "content-type": "application/json",
+          },
+          signal: requestSignal(this.options.timeoutMs ?? 30_000),
+          body: JSON.stringify({
+            model: this.model,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            ...(responseFormat ? { response_format: responseFormat } : {}),
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await safeResponseText(response);
+          const message = [
+            `LLM request failed: ${response.status} ${response.statusText}`,
+            errorText ? errorText.slice(0, 500) : undefined,
+          ].filter(Boolean).join(" - ");
+          lastError = new Error(message);
+
+          if (attempt < maxRetries && isTransientStatus(response.status)) {
+            await sleep(retryDelayFor(response, errorText, retryDelayMs * 2 ** attempt));
+            continue;
+          }
+
+          throw lastError;
+        }
+
+        const payload = (await response.json()) as ChatCompletionsResponse;
+        const content = payload.choices?.[0]?.message?.content;
+        if (!content) {
+          throw new Error("LLM response did not include message content");
+        }
+
+        return content;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < maxRetries && isTransientError(lastError)) {
+          await sleep(retryDelayMs * 2 ** attempt);
+          continue;
+        }
+
+        throw lastError;
+      }
     }
 
-    const payload = (await response.json()) as ChatCompletionsResponse;
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error("LLM response did not include message content");
-    }
-
-    return content;
+    throw lastError ?? new Error("LLM request failed");
   }
+}
+
+function jsonSchemaFor<T>(schema: z.ZodType<T>): JsonSchemaHint {
+  try {
+    return z.toJSONSchema(schema) as JsonSchemaHint;
+  } catch {
+    return {};
+  }
+}
+
+function topLevelDescription(schema: JsonSchemaHint): string {
+  return typeof schema.type === "string" ? `a JSON ${schema.type}` : "the schema shape";
+}
+
+function responseFormatFor(schema: JsonSchemaHint): Record<string, unknown> | undefined {
+  return schema.type === "object" ? { type: "json_object" } : undefined;
+}
+
+function parseAndValidateJson<T>(content: string, schema: z.ZodType<T>): T {
+  const parsed = parseJsonContent(content);
+  const direct = schema.safeParse(parsed);
+  if (direct.success) {
+    return direct.data;
+  }
+
+  for (const repaired of repairJsonCandidates(parsed)) {
+    const result = schema.safeParse(repaired);
+    if (result.success) {
+      return result.data;
+    }
+  }
+
+  throw new Error(
+    [
+      "LLM JSON did not match schema.",
+      `Issues: ${JSON.stringify(direct.error.issues.slice(0, 5))}`,
+      `Received: ${JSON.stringify(parsed).slice(0, 1_000)}`,
+    ].join(" "),
+  );
+}
+
+function parseJsonContent(content: string): unknown {
+  const stripped = stripMarkdownFence(content.trim());
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    const embedded = extractBalancedJson(stripped);
+    if (!embedded) {
+      throw new Error(`LLM response was not valid JSON: ${stripped.slice(0, 500)}`);
+    }
+
+    try {
+      return JSON.parse(embedded);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`LLM response contained malformed JSON: ${message}`);
+    }
+  }
+}
+
+function stripMarkdownFence(value: string): string {
+  const match = value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match?.[1]?.trim() ?? value;
+}
+
+function extractBalancedJson(value: string): string | undefined {
+  const start = value.search(/[\[{]/);
+  if (start === -1) {
+    return undefined;
+  }
+
+  const opener = value[start];
+  const closer = opener === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === opener) {
+      depth += 1;
+    }
+
+    if (char === closer) {
+      depth -= 1;
+      if (depth === 0) {
+        return value.slice(start, index + 1);
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function repairJsonCandidates(parsed: unknown): unknown[] {
+  const candidates: unknown[] = [];
+
+  if (Array.isArray(parsed)) {
+    candidates.push(addMissingFactIndexes(parsed));
+    candidates.push({
+      facts: parsed.map(normalizeFactCandidate).filter(Boolean),
+      entities: [],
+      relations: [],
+    });
+    candidates.push({
+      facts: [],
+      entities: [],
+      relations: parsed.map(normalizeRelationCandidate).filter(Boolean),
+    });
+    candidates.push({
+      facts: [],
+      entities: parsed.map(normalizeEntityCandidate).filter(Boolean),
+      relations: [],
+    });
+    return candidates;
+  }
+
+  if (isRecord(parsed)) {
+    if ("fact" in parsed || "content" in parsed || "text" in parsed) {
+      candidates.push({
+        facts: [normalizeFactCandidate(parsed)].filter(Boolean),
+        entities: [],
+        relations: [],
+      });
+    }
+
+    if (Array.isArray(parsed.facts)) {
+      candidates.push({
+        ...parsed,
+        facts: parsed.facts.map(normalizeFactCandidate).filter(Boolean),
+        entities: Array.isArray(parsed.entities)
+          ? parsed.entities.map(normalizeEntityCandidate).filter(Boolean)
+          : [],
+        relations: Array.isArray(parsed.relations)
+          ? parsed.relations.map(normalizeRelationCandidate).filter(Boolean)
+          : [],
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function addMissingFactIndexes(values: unknown[]): unknown[] {
+  return values.map((value, index) => {
+    if (!isRecord(value) || "factIndex" in value) {
+      return value;
+    }
+
+    return { factIndex: index, ...value };
+  });
+}
+
+function normalizeFactCandidate(value: unknown): unknown {
+  if (typeof value === "string") {
+    return { fact: value, temporalRefs: [] };
+  }
+
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const fact = stringValue(value.fact) ?? stringValue(value.content) ?? stringValue(value.text);
+  if (!fact) {
+    return undefined;
+  }
+
+  return {
+    ...value,
+    fact,
+    temporalRefs: Array.isArray(value.temporalRefs) ? value.temporalRefs : [],
+  };
+}
+
+function normalizeEntityCandidate(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const kind = stringValue(value.kind) ?? stringValue(value.type);
+  const name = stringValue(value.name);
+  return kind && name ? { ...value, kind, name } : undefined;
+}
+
+function normalizeRelationCandidate(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const srcName = stringValue(value.srcName) ?? stringValue(value.source) ?? stringValue(value.src);
+  const relation = stringValue(value.relation) ?? stringValue(value.type);
+  const dstName = stringValue(value.dstName) ?? stringValue(value.target) ?? stringValue(value.dst);
+  const fact = stringValue(value.fact) ?? [srcName, relation, dstName].filter(Boolean).join(" ");
+
+  return srcName && relation && dstName && fact
+    ? { ...value, srcName, relation, dstName, fact }
+    : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function safeResponseText(response: Response): Promise<string | undefined> {
+  try {
+    return await response.text();
+  } catch {
+    return undefined;
+  }
+}
+
+function requestSignal(timeoutMs: number): AbortSignal | undefined {
+  return typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(timeoutMs)
+    : undefined;
+}
+
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+function isTransientError(error: Error): boolean {
+  return error.name === "AbortError"
+    || error.name === "TimeoutError"
+    || /(?:ECONNRESET|ETIMEDOUT|ENOTFOUND|fetch failed)/i.test(error.message);
+}
+
+function retryDelayFor(response: Response, body: string | undefined, fallbackMs: number): number {
+  const retryAfter = response.headers.get("retry-after");
+  const headerDelay = retryAfter ? retryAfterMs(retryAfter) : undefined;
+  if (headerDelay !== undefined) {
+    return headerDelay;
+  }
+
+  const bodyDelay = body?.match(/retry in\s+(\d+(?:\.\d+)?)s/i)?.[1];
+  if (bodyDelay) {
+    return Math.ceil(Number.parseFloat(bodyDelay) * 1_000);
+  }
+
+  return fallbackMs;
+}
+
+function retryAfterMs(value: string): number | undefined {
+  const seconds = Number.parseFloat(value);
+  if (!Number.isNaN(seconds)) {
+    return Math.ceil(seconds * 1_000);
+  }
+
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) {
+    return Math.max(0, date - Date.now());
+  }
+
+  return undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class LocalHeuristicLLM implements LLM {
