@@ -7,6 +7,7 @@ export interface Config {
   databaseUrl?: string;
   port: number;
   embeddingsProvider: string;
+  embeddingsLocal: boolean;
   embeddingsApiKey?: string;
   embeddingsModel: string;
   embeddingsBaseUrl: string;
@@ -48,6 +49,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: env.DATABASE_URL,
     port,
     embeddingsProvider: env.EMBEDDINGS_PROVIDER ?? "local",
+    embeddingsLocal: env.EMBEDDINGS_LOCAL === "1",
     embeddingsApiKey: env.EMBEDDINGS_API_KEY,
     embeddingsModel: env.EMBEDDINGS_MODEL ?? DEFAULT_EMBEDDINGS_MODEL,
     embeddingsBaseUrl: env.EMBEDDINGS_BASE_URL ?? DEFAULT_EMBEDDINGS_BASE_URL,

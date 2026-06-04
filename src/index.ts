@@ -179,7 +179,7 @@ export function startHttpServer(): void {
       console.log(
         `embeddings provider: ${config.embeddingsProvider}; semantic similarity: ${
           embeddings.semantic ? "enabled" : "disabled"
-        }`,
+        }; local fallback: ${config.embeddingsLocal ? "enabled" : "disabled"}`,
       );
     },
   );

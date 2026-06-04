@@ -1,5 +1,9 @@
 import { getSqlClient } from "../db/client.js";
-import { hasEmbeddingVectorColumn, vectorLiteral } from "../db/embedding-vectors.js";
+import {
+  hasEmbeddingVectorColumn,
+  localEmbeddingFallbackEnabled,
+  vectorLiteral,
+} from "../db/embedding-vectors.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 
 export interface RecallResult {
@@ -31,6 +35,10 @@ export async function vectorRecall(
   const [queryEmbedding] = await getEmbeddings().embed([query]);
   if (await hasEmbeddingVectorColumn("memories")) {
     return pgVectorRecall(queryEmbedding, scope, k, asOf);
+  }
+
+  if (!localEmbeddingFallbackEnabled()) {
+    return [];
   }
 
   const sql = getSqlClient();

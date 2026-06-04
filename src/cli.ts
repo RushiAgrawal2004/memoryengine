@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closeDb, checkDatabase } from "./db/client.js";
+import { getPgvectorDoctorReport } from "./db/embedding-vectors.js";
 import { searchMemories } from "./db/memories.js";
 import { config } from "./lib/config.js";
 import { startHttpServer } from "./index.js";
@@ -183,12 +184,42 @@ function parseJsonResponse(value: string): unknown | undefined {
 async function runDoctor(): Promise<void> {
   const db = await checkDatabase();
   const serverRunning = await isHttpServerRunning();
+  const pgvector = db ? await getPgvectorDoctorReport() : undefined;
+
   console.log(`database: ${db ? "ok" : "failed"}`);
   console.log(`server: ${serverRunning ? "running" : "not running"} at http://localhost:${config.port}`);
   console.log(`viewer: http://localhost:${config.port}/viewer`);
   console.log(`embeddings provider: ${config.embeddingsProvider}`);
+  console.log(`embeddings local fallback: ${config.embeddingsLocal ? "enabled" : "disabled"}`);
   console.log(`llm provider: ${config.llmProvider}`);
   console.log(`rerank provider: ${config.rerankProvider}`);
+
+  if (!pgvector) {
+    return;
+  }
+
+  console.log(`pgvector extension: ${pgvector.extensionInstalled ? "present" : "missing"}`);
+  console.log(`pgvector local JS fallback: ${pgvector.localFallbackEnabled ? "enabled" : "disabled"}`);
+  console.log("vectorization:");
+  for (const table of pgvector.tables) {
+    console.log(
+      `- ${table.table}: ${table.vectorEmbeddings}/${table.totalRows} vectorized (${table.vectorizedPercent}%), `
+      + `missing=${table.missingVectors}, column=${table.vectorColumn ? "yes" : "no"}, `
+      + `hnsw=${table.hnswIndex ? "yes" : "no"}`,
+    );
+  }
+
+  if (pgvector.memoryQueryPlan.length > 0) {
+    console.log(
+      `memory vector recall plan uses index: ${pgvector.memoryQueryPlanUsesIndex ? "yes" : "no"}`,
+    );
+    console.log("memory vector recall plan:");
+    for (const line of pgvector.memoryQueryPlan) {
+      console.log(`  ${line}`);
+    }
+  } else {
+    console.log("memory vector recall plan: unavailable until memories.embedding_vector has rows");
+  }
 }
 
 async function isHttpServerRunning(): Promise<boolean> {

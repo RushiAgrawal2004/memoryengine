@@ -7,8 +7,14 @@ import { remember } from "../src/write/remember.js";
 
 describe("memory activation", () => {
   const scopes: string[] = [];
+  const originalEmbeddingsLocal = process.env.EMBEDDINGS_LOCAL;
 
   afterEach(async () => {
+    if (originalEmbeddingsLocal === undefined) {
+      delete process.env.EMBEDDINGS_LOCAL;
+    } else {
+      process.env.EMBEDDINGS_LOCAL = originalEmbeddingsLocal;
+    }
     const sql = getSqlClient();
     for (const scope of scopes.splice(0)) {
       await sql`delete from memories where scope = ${scope}`;
@@ -50,6 +56,7 @@ describe("memory activation", () => {
   });
 
   it("returns project context and chat instructions", async () => {
+    process.env.EMBEDDINGS_LOCAL = "1";
     const scope = testScope();
     await saveMemory({
       scope,
@@ -111,6 +118,7 @@ describe("memory activation", () => {
   });
 
   it("exposes activation over HTTP", async () => {
+    process.env.EMBEDDINGS_LOCAL = "1";
     const scope = testScope();
     await saveMemory({
       scope,

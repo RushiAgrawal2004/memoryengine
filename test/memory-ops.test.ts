@@ -28,12 +28,19 @@ class FakeOpsLLM implements LLM {
 
 describe("ingestFacts", () => {
   const scopes: string[] = [];
+  const originalEmbeddingsLocal = process.env.EMBEDDINGS_LOCAL;
 
   beforeEach(() => {
+    process.env.EMBEDDINGS_LOCAL = "1";
     setLLMForTest(new FakeOpsLLM());
   });
 
   afterEach(async () => {
+    if (originalEmbeddingsLocal === undefined) {
+      delete process.env.EMBEDDINGS_LOCAL;
+    } else {
+      process.env.EMBEDDINGS_LOCAL = originalEmbeddingsLocal;
+    }
     setLLMForTest(undefined);
     const sql = getSqlClient();
     for (const scope of scopes.splice(0)) {
