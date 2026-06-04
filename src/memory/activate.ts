@@ -1,7 +1,8 @@
 import { searchMemories, MemorySearchResult } from "../db/memories.js";
 import { startMemorySession, MemorySession } from "../db/sessions.js";
-import { currentRepoRef, projectScope, RepoRef } from "../grounding/git.js";
+import { currentRepoRef, RepoRef } from "../grounding/git.js";
 import { config } from "../lib/config.js";
+import { resolveMemoryScope } from "./scope.js";
 
 export interface ActivateMemoryInput {
   task?: string;
@@ -31,7 +32,7 @@ export async function activateMemory(
   input: ActivateMemoryInput = {},
 ): Promise<ActivateMemoryResult> {
   const repo = await currentRepoRef(input.cwd);
-  const scope = input.scope ?? await projectScope(input.cwd);
+  const scope = await resolveMemoryScope(input.scope, input.cwd);
   const query = input.task?.trim() || DEFAULT_QUERY;
   const session = await startMemorySession({
     scope,

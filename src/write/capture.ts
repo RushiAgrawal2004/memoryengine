@@ -1,5 +1,6 @@
 import { getSqlClient } from "../db/client.js";
 import { currentRepoRef, projectScope } from "../grounding/git.js";
+import { resolveMemoryScope } from "../memory/scope.js";
 
 export interface CapturedEpisode {
   id: string;
@@ -24,7 +25,11 @@ export async function captureEpisode(input: CaptureEpisodeInput): Promise<Captur
   const sql = getSqlClient();
   const occurredAt = input.occurredAt ?? new Date();
   const repoRef = await currentRepoRef();
-  const scope = input.scope ?? (repoRef ? await projectScope() : DEFAULT_SCOPE);
+  const scope = input.scope
+    ? await resolveMemoryScope(input.scope)
+    : repoRef
+      ? await projectScope()
+      : DEFAULT_SCOPE;
 
   const [row] = await sql<Array<{ id: string; occurredAt: Date }>>`
     insert into episodes (session_id, scope, kind, content, source, repo_ref, occurred_at)

@@ -1,5 +1,6 @@
 import { getSqlClient } from "./client.js";
 import { currentRepoRef, projectScope, RepoRef } from "../grounding/git.js";
+import { resolveMemoryScope } from "../memory/scope.js";
 
 export interface MemorySession {
   id: string;
@@ -26,7 +27,11 @@ const DEFAULT_SCOPE = "global";
 export async function startMemorySession(input: StartSessionInput = {}): Promise<MemorySession> {
   const sql = getSqlClient();
   const repoRef = await currentRepoRef(input.cwd);
-  const scope = input.scope ?? (repoRef ? await projectScope(input.cwd) : DEFAULT_SCOPE);
+  const scope = input.scope
+    ? await resolveMemoryScope(input.scope, input.cwd)
+    : repoRef
+      ? await projectScope(input.cwd)
+      : DEFAULT_SCOPE;
   const title = input.title ?? titleFor(input.task);
 
   const [session] = await sql<MemorySession[]>`

@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { closeDb, getSqlClient } from "../src/db/client.js";
+import { saveMemory } from "../src/db/memories.js";
 import { createApp } from "../src/index.js";
 
 describe("viewer routes", () => {
@@ -62,6 +63,29 @@ describe("viewer routes", () => {
     await sql`delete from episodes where scope = ${scope}`;
     await sql`delete from chat_sessions where scope = ${scope}`;
   }, 10000);
+
+  it("hides test and demo scopes by default but allows explicit inspection", async () => {
+    const app = createApp();
+    const scope = `test-viewer:${crypto.randomUUID()}`;
+    const content = `hidden viewer fixture ${crypto.randomUUID()}`;
+    await saveMemory({ scope, content });
+
+    const hidden = await app.request(
+      `/viewer/data/memories?q=${encodeURIComponent(content)}`,
+    );
+    const included = await app.request(
+      `/viewer/data/memories?includeInternal=1&q=${encodeURIComponent(content)}`,
+    );
+    const scoped = await app.request(
+      `/viewer/data/memories?scope=${encodeURIComponent(scope)}&q=${encodeURIComponent(content)}`,
+    );
+
+    await expectRowCount(hidden, 0);
+    await expectRowCount(included, 1);
+    await expectRowCount(scoped, 1);
+
+    await getSqlClient()`delete from memories where scope = ${scope}`;
+  });
 });
 
 async function expectRows(response: Response): Promise<void> {
@@ -69,4 +93,11 @@ async function expectRows(response: Response): Promise<void> {
 
   expect(response.status).toBe(200);
   expect(payload.rows.length).toBeGreaterThan(0);
+}
+
+async function expectRowCount(response: Response, count: number): Promise<void> {
+  const payload = (await response.json()) as { rows: unknown[] };
+
+  expect(response.status).toBe(200);
+  expect(payload.rows.length).toBe(count);
 }

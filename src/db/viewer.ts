@@ -67,9 +67,10 @@ export interface ViewerListInput {
   q?: string;
   scope?: string;
   limit?: number;
+  includeInternal?: boolean;
 }
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
 export async function listViewerMemories(
@@ -78,6 +79,7 @@ export async function listViewerMemories(
   const sql = getSqlClient();
   const query = searchPattern(input.q);
   const scope = normalized(input.scope);
+  const includeInternal = Boolean(input.includeInternal);
 
   return sql<ViewerMemory[]>`
     select
@@ -95,6 +97,14 @@ export async function listViewerMemories(
       created_at as "createdAt"
     from memories
     where (${scope}::text is null or scope = ${scope})
+      and (
+        ${includeInternal}::boolean
+        or ${scope}::text is not null
+        or (
+          scope not like 'test%'
+          and scope not in ('project:memoryengine-demo', 'project:todo-codex-demo')
+        )
+      )
       and (${query}::text is null or content ilike ${query})
     order by created_at desc
     limit ${limitFor(input.limit)}
@@ -107,6 +117,7 @@ export async function listViewerSessions(
   const sql = getSqlClient();
   const query = searchPattern(input.q);
   const scope = normalized(input.scope);
+  const includeInternal = Boolean(input.includeInternal);
 
   return sql<ViewerSession[]>`
     select
@@ -126,6 +137,14 @@ export async function listViewerSessions(
     left join episodes on episodes.session_id = chat_sessions.id
     where (${scope}::text is null or chat_sessions.scope = ${scope})
       and (
+        ${includeInternal}::boolean
+        or ${scope}::text is not null
+        or (
+          chat_sessions.scope not like 'test%'
+          and chat_sessions.scope not in ('project:memoryengine-demo', 'project:todo-codex-demo')
+        )
+      )
+      and (
         ${query}::text is null
         or chat_sessions.title ilike ${query}
         or chat_sessions.task ilike ${query}
@@ -143,6 +162,7 @@ export async function listViewerEntities(
   const sql = getSqlClient();
   const query = searchPattern(input.q);
   const scope = normalized(input.scope);
+  const includeInternal = Boolean(input.includeInternal);
 
   return sql<ViewerEntity[]>`
     select
@@ -154,6 +174,14 @@ export async function listViewerEntities(
       created_at as "createdAt"
     from entities
     where (${scope}::text is null or scope = ${scope})
+      and (
+        ${includeInternal}::boolean
+        or ${scope}::text is not null
+        or (
+          scope not like 'test%'
+          and scope not in ('project:memoryengine-demo', 'project:todo-codex-demo')
+        )
+      )
       and (${query}::text is null or name ilike ${query} or kind ilike ${query})
     order by created_at desc
     limit ${limitFor(input.limit)}
@@ -164,6 +192,7 @@ export async function listViewerEdges(input: ViewerListInput = {}): Promise<View
   const sql = getSqlClient();
   const query = searchPattern(input.q);
   const scope = normalized(input.scope);
+  const includeInternal = Boolean(input.includeInternal);
 
   return sql<ViewerEdge[]>`
     select
@@ -183,6 +212,14 @@ export async function listViewerEdges(input: ViewerListInput = {}): Promise<View
     left join entities dst on dst.id = edges.dst
     where (${scope}::text is null or edges.scope = ${scope})
       and (
+        ${includeInternal}::boolean
+        or ${scope}::text is not null
+        or (
+          edges.scope not like 'test%'
+          and edges.scope not in ('project:memoryengine-demo', 'project:todo-codex-demo')
+        )
+      )
+      and (
         ${query}::text is null
         or edges.fact ilike ${query}
         or edges.relation ilike ${query}
@@ -200,6 +237,7 @@ export async function listViewerEpisodes(
   const sql = getSqlClient();
   const query = searchPattern(input.q);
   const scope = normalized(input.scope);
+  const includeInternal = Boolean(input.includeInternal);
 
   return sql<ViewerEpisode[]>`
     select
@@ -213,6 +251,14 @@ export async function listViewerEpisodes(
       created_at as "createdAt"
     from episodes
     where (${scope}::text is null or scope = ${scope})
+      and (
+        ${includeInternal}::boolean
+        or ${scope}::text is not null
+        or (
+          scope not like 'test%'
+          and scope not in ('project:memoryengine-demo', 'project:todo-codex-demo')
+        )
+      )
       and (
         ${query}::text is null
         or content ilike ${query}

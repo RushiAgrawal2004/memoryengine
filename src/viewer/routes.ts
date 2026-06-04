@@ -39,6 +39,7 @@ function queryInput(query: Record<string, string>): ViewerListInput {
     q: query.q,
     scope: query.scope,
     limit,
+    includeInternal: query.includeInternal === "1",
   };
 }
 
@@ -85,10 +86,11 @@ function viewerHtml(): string {
     }
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(180px, 1fr) minmax(160px, 280px);
+      grid-template-columns: minmax(180px, 1fr) minmax(160px, 280px) auto;
       gap: 10px;
       margin-bottom: 14px;
-      max-width: 960px;
+      max-width: 1160px;
+      align-items: center;
     }
     input {
       width: 100%;
@@ -121,6 +123,20 @@ function viewerHtml(): string {
       background: var(--accent-soft);
       color: var(--accent);
       font-weight: 650;
+    }
+    label.toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      height: 36px;
+      color: var(--muted);
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    label.toggle input {
+      width: 16px;
+      height: 16px;
+      padding: 0;
     }
     .status {
       min-height: 22px;
@@ -196,7 +212,8 @@ function viewerHtml(): string {
   <main>
     <div class="toolbar">
       <input id="search" type="search" placeholder="Search current tab">
-      <input id="scope" type="search" placeholder="Scope filter">
+      <input id="scope" type="search" placeholder="Scope filter, e.g. project:MEMORY ENGINE TEST">
+      <label class="toggle"><input id="includeInternal" type="checkbox">Show demo/test data</label>
     </div>
     <nav class="tabs" aria-label="Viewer tabs">
       <button data-tab="memories" aria-selected="true">Memories</button>
@@ -237,6 +254,7 @@ function viewerHtml(): string {
     const status = document.querySelector("#status");
     const search = document.querySelector("#search");
     const scope = document.querySelector("#scope");
+    const includeInternal = document.querySelector("#includeInternal");
 
     document.querySelectorAll("[data-tab]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -251,18 +269,21 @@ function viewerHtml(): string {
       clearTimeout(timer);
       timer = setTimeout(loadRows, 160);
     }));
+    includeInternal.addEventListener("change", loadRows);
 
     async function loadRows() {
       status.textContent = "Loading...";
       const params = new URLSearchParams();
       if (search.value.trim()) params.set("q", search.value.trim());
       if (scope.value.trim()) params.set("scope", scope.value.trim());
+      if (includeInternal.checked) params.set("includeInternal", "1");
       try {
         const response = await fetch("/viewer/data/" + active + "?" + params.toString());
         if (!response.ok) throw new Error(response.status + " " + response.statusText);
         const payload = await response.json();
         renderRows(payload.rows || []);
-        status.textContent = (payload.rows || []).length + " rows";
+        status.textContent = (payload.rows || []).length + " rows" +
+          (includeInternal.checked ? "" : " · demo/test data hidden");
       } catch (error) {
         status.innerHTML = '<span class="error">Failed to load viewer data.</span>';
         content.innerHTML = "";

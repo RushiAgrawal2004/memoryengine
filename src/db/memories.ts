@@ -3,6 +3,7 @@ import { syncMemoryVector } from "./embedding-vectors.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { currentRepoRef, projectScope } from "../grounding/git.js";
 import { retrieve } from "../read/retrieve.js";
+import { resolveMemoryScope } from "../memory/scope.js";
 
 export interface SaveMemoryInput {
   content: string;
@@ -39,7 +40,11 @@ export async function saveMemory(input: SaveMemoryInput): Promise<SavedMemory> {
   const sql = getSqlClient();
   const type = input.type ?? DEFAULT_TYPE;
   const repoRef = await currentRepoRef();
-  const scope = input.scope ?? (repoRef ? await projectScope() : DEFAULT_SCOPE);
+  const scope = input.scope
+    ? await resolveMemoryScope(input.scope)
+    : repoRef
+      ? await projectScope()
+      : DEFAULT_SCOPE;
   const [embedding] = await getEmbeddings().embed([input.content]);
 
   const [row] = await sql<{ id: string }[]>`

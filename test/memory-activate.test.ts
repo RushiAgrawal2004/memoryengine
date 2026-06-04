@@ -70,6 +70,19 @@ describe("memory activation", () => {
     expect(result.instructions.join(" ")).toContain("memory.remember");
   });
 
+  it("resolves a generic project scope to a concrete project scope", async () => {
+    const result = await activateMemory({
+      scope: "project",
+      task: "build a todo app",
+      agent: "codex",
+    });
+    scopes.push(result.scope);
+
+    expect(result.scope).toMatch(/^project:/);
+    expect(result.scope).not.toBe("project");
+    expect(result.session.scope).toBe(result.scope);
+  });
+
   it("attaches remembered episodes and memories to the active session", async () => {
     const scope = testScope();
     const activated = await activateMemory({
