@@ -3,9 +3,10 @@
 This is the normal chat-window workflow.
 
 Memory is opt-in per chat window. A chat does not write memories until it calls
-`memory.activate`, and `memory.remember` must include the returned `session.id`.
-Other chats can search memory, but they cannot store into this chat's session
-unless they activate their own session.
+`memory.activate`. After activation, explicit `memory.remember` calls must include
+the returned `session.id`, and installed capture hooks can automatically attach
+tool activity to the latest active session for the project. Other chats can search
+memory, but they cannot store unless they activate their own session.
 
 After the MCP server is connected, start a Codex or Claude chat and say:
 
@@ -47,6 +48,10 @@ Use the Sessions tab to see each activated chat window. Use the returned `sessio
 
 If `/remember` or `memory.remember` is called without a `sessionId`, the engine
 rejects it. That prevents accidental storage from unrelated chat windows.
+
+Automatic capture hooks use `/hook/capture` instead. That endpoint looks up the
+latest active session for the project scope and skips the event if no activated
+session exists.
 
 ## MCP Config
 

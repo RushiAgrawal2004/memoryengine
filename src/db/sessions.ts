@@ -78,6 +78,32 @@ export async function getMemorySession(sessionId: string): Promise<MemorySession
   return session;
 }
 
+export async function getLatestActiveMemorySession(
+  scope: string,
+): Promise<MemorySession | undefined> {
+  const sql = getSqlClient();
+  const [session] = await sql<MemorySession[]>`
+    select
+      id,
+      scope,
+      title,
+      task,
+      agent,
+      status,
+      repo_ref as "repoRef",
+      started_at as "startedAt",
+      ended_at as "endedAt"
+    from chat_sessions
+    where scope = ${scope}
+      and status = 'active'
+      and ended_at is null
+    order by started_at desc
+    limit 1
+  `;
+
+  return session;
+}
+
 export async function endMemorySession(sessionId: string): Promise<MemorySession | undefined> {
   const sql = getSqlClient();
   const [session] = await sql<MemorySession[]>`

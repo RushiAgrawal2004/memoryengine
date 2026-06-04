@@ -234,6 +234,7 @@ Codex hook config example:
 
 Set `MEMORY_ENGINE_URL=http://localhost:3777` if your daemon is not on the default URL. Capture hooks are fire-and-forget with a 1500ms abort and a 500ms escape hatch. Session-start recall uses `MEMORY_ENGINE_SEARCH_TIMEOUT_MS` and defaults to 50ms so it stays out of the prompt path.
 
-Capture hooks only write when `MEMORY_ENGINE_SESSION_ID` or an event-provided
-`sessionId` is present. Without an activated session id, hooks skip capture, so
-memory is not stored for every random chat.
+Capture hooks post to `/hook/capture`. The server writes only when it can find an
+active `memory.activate` session for the project scope; otherwise the hook returns
+quietly and nothing is stored. That gives automatic capture after activation
+without storing every random chat.

@@ -3,8 +3,10 @@ import { Hono } from "hono";
 import { fileURLToPath } from "node:url";
 import { checkDatabase } from "./db/client.js";
 import { saveMemory, searchMemories } from "./db/memories.js";
+import { getLatestActiveMemorySession } from "./db/sessions.js";
 import { config } from "./lib/config.js";
 import { activateMemory } from "./memory/activate.js";
+import { resolveMemoryScope } from "./memory/scope.js";
 import { runStdioServer } from "./mcp/server.js";
 import { registerViewerRoutes } from "./viewer/routes.js";
 import { MemorySessionInvalidError, MemorySessionRequiredError, remember } from "./write/remember.js";
@@ -110,6 +112,49 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
         error instanceof MemorySessionInvalidError
       ) {
         return c.json({ error: error.message, code: error.code }, 400);
+      }
+      throw error;
+    }
+  });
+
+  app.post("/hook/capture", async (c) => {
+    const body: {
+      text?: unknown;
+      scope?: unknown;
+      cwd?: unknown;
+      sessionId?: unknown;
+    } = await c.req.json().catch(() => ({}));
+
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      return c.json({ error: "text is required" }, 400);
+    }
+
+    const requestedScope = typeof body.scope === "string" ? body.scope : undefined;
+    const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
+    const scope = await resolveMemoryScope(requestedScope, cwd);
+    const sessionId = typeof body.sessionId === "string"
+      ? body.sessionId
+      : (await getLatestActiveMemorySession(scope))?.id;
+
+    if (!sessionId) {
+      return c.json({ captured: false, reason: "no_active_session", scope }, 202);
+    }
+
+    try {
+      const result = await remember({
+        text: body.text,
+        scope,
+        sessionId,
+        requireSession: true,
+      });
+
+      return c.json({ captured: true, ...result });
+    } catch (error) {
+      if (
+        error instanceof MemorySessionRequiredError ||
+        error instanceof MemorySessionInvalidError
+      ) {
+        return c.json({ captured: false, error: error.message, code: error.code }, 400);
       }
       throw error;
     }

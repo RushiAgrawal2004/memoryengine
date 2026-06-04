@@ -66,20 +66,16 @@ export async function printSessionRecall(agentName) {
 
 export async function captureHookEvent(agentName, eventName) {
   const input = await readHookInput();
-  const sessionId = sessionIdFrom(input);
-  if (!sessionId) {
-    return;
-  }
-
   const text = formatEvent(agentName, eventName, input);
   if (!text) {
     return;
   }
 
-  void postJson("/remember", {
+  void postJson("/hook/capture", {
     text,
     scope: scopeFrom(input),
-    sessionId,
+    cwd: firstString(input.cwd, input.workspace, input.workspaceFolder),
+    sessionId: sessionIdFrom(input),
   }, CAPTURE_TIMEOUT_MS).catch(() => undefined);
 
   setTimeout(() => process.exit(0), 500).unref();
