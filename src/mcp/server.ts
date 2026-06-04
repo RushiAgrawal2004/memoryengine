@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import { saveMemory, searchMemories } from "../db/memories.js";
 import { flagStaleMemories } from "../grounding/staleness.js";
-import { activateMemory } from "../memory/activate.js";
+import { activateMemory, ActivateMemoryResult } from "../memory/activate.js";
 import { remember } from "../write/remember.js";
 
 export function createMemoryMcpServer(): McpServer {
@@ -63,7 +63,7 @@ export function createMemoryMcpServer(): McpServer {
     },
     async ({ task, scope, cwd, agent, limit }) => {
       const result = await activateMemory({ task, scope, cwd, agent, limit });
-      const structuredContent: Record<string, unknown> = { ...result };
+      const structuredContent = serializeActivateResult(result);
 
       return {
         content: [{ type: "text", text: JSON.stringify(structuredContent) }],
@@ -201,6 +201,27 @@ export function createMemoryMcpServer(): McpServer {
   );
 
   return server;
+}
+
+export function serializeActivateResult(
+  result: ActivateMemoryResult,
+): Record<string, unknown> {
+  return {
+    ...result,
+    session: {
+      ...result.session,
+      startedAt: toIsoString(result.session.startedAt),
+      endedAt: result.session.endedAt ? toIsoString(result.session.endedAt) : null,
+    },
+    memories: result.memories.map((memory) => ({
+      ...memory,
+      createdAt: toIsoString(memory.createdAt),
+    })),
+  };
+}
+
+function toIsoString(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
 }
 
 export async function runStdioServer(): Promise<void> {
