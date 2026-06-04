@@ -43,6 +43,13 @@
       "when": 1780774800000,
       "tag": "0005_traces",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780861200000,
+      "tag": "0006_jobs",
+      "breakpoints": true
     }
   ]
 }

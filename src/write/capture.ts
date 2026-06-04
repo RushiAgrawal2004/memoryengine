@@ -1,4 +1,5 @@
 import { getSqlClient } from "../db/client.js";
+import { enqueueEpisodeProcessingJob } from "../db/jobs.js";
 import { currentRepoRef, projectScope } from "../grounding/git.js";
 import { resolveMemoryScope } from "../memory/scope.js";
 
@@ -17,6 +18,11 @@ export interface CaptureEpisodeInput {
   kind?: string;
   sessionId?: string;
   occurredAt?: Date;
+}
+
+export interface QueuedCapture extends CapturedEpisode {
+  jobId: string;
+  jobStatus: string;
 }
 
 const DEFAULT_SCOPE = "global";
@@ -51,5 +57,24 @@ export async function captureEpisode(input: CaptureEpisodeInput): Promise<Captur
     content: input.text,
     scope,
     occurredAt: row.occurredAt,
+  };
+}
+
+export async function capture(input: CaptureEpisodeInput): Promise<QueuedCapture> {
+  const episode = await captureEpisode(input);
+  const job = await enqueueEpisodeProcessingJob({
+    episodeId: episode.id,
+    scope: episode.scope,
+    payload: {
+      source: input.source ?? "hook",
+      kind: input.kind ?? "message",
+      sessionId: episode.sessionId ?? null,
+    },
+  });
+
+  return {
+    ...episode,
+    jobId: job.id,
+    jobStatus: job.status,
   };
 }

@@ -159,3 +159,27 @@ export const traces = pgTable(
     index("traces_scope_created_at_idx").on(table.scope, table.createdAt),
   ],
 );
+
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    type: text("type").notNull(),
+    status: text("status").notNull().default("pending"),
+    scope: text("scope"),
+    episodeId: uuid("episode_id").references(() => episodes.id),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    runAfter: timestamp("run_after", { withTimezone: true }).notNull().defaultNow(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    ...timestamps,
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("jobs_type_episode_id_idx").on(table.type, table.episodeId),
+    index("jobs_status_run_after_idx").on(table.status, table.runAfter),
+    index("jobs_scope_created_at_idx").on(table.scope, table.createdAt),
+  ],
+);

@@ -3,14 +3,16 @@ import { Hono } from "hono";
 import { fileURLToPath } from "node:url";
 import { checkDatabase } from "./db/client.js";
 import { saveMemory, searchMemories } from "./db/memories.js";
-import { getLatestActiveMemorySession } from "./db/sessions.js";
+import { getLatestActiveMemorySession, getMemorySession } from "./db/sessions.js";
 import { config } from "./lib/config.js";
 import { activateMemory } from "./memory/activate.js";
 import { resolveMemoryScope } from "./memory/scope.js";
 import { runStdioServer } from "./mcp/server.js";
 import { getEmbeddings } from "./providers/embeddings.js";
 import { registerViewerRoutes } from "./viewer/routes.js";
+import { capture } from "./write/capture.js";
 import { MemorySessionInvalidError, MemorySessionRequiredError, remember } from "./write/remember.js";
+import { startProcessingWorker } from "./write/worker.js";
 
 export function createApp(options: { checkDatabase?: () => Promise<boolean> } = {}) {
   const app = new Hono();
@@ -133,23 +135,40 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
     const requestedScope = typeof body.scope === "string" ? body.scope : undefined;
     const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
     const scope = await resolveMemoryScope(requestedScope, cwd);
-    const sessionId = typeof body.sessionId === "string"
-      ? body.sessionId
-      : (await getLatestActiveMemorySession(scope))?.id;
+    const explicitSessionId = typeof body.sessionId === "string" ? body.sessionId : undefined;
+    const session = explicitSessionId
+      ? await getMemorySession(explicitSessionId)
+      : await getLatestActiveMemorySession(scope);
+    const sessionId = session?.id;
 
-    if (!sessionId) {
+    if (!session) {
       return c.json({ captured: false, reason: "no_active_session", scope }, 202);
+    }
+    if (session.status !== "active" || session.scope !== scope) {
+      return c.json({
+        captured: false,
+        error: `memory session ${session.id} is not active for scope ${scope}`,
+        code: "MEMORY_SESSION_INVALID",
+      }, 400);
     }
 
     try {
-      const result = await remember({
+      const result = await capture({
         text: body.text,
         scope,
         sessionId,
-        requireSession: true,
+        source: "hook",
+        kind: "message",
       });
 
-      return c.json({ captured: true, ...result });
+      return c.json({
+        captured: true,
+        queued: true,
+        episodeId: result.id,
+        sessionId: result.sessionId,
+        jobId: result.jobId,
+        jobStatus: result.jobStatus,
+      }, 202);
     } catch (error) {
       if (
         error instanceof MemorySessionRequiredError ||
@@ -167,6 +186,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
 }
 
 export function startHttpServer(): void {
+  const worker = startProcessingWorker();
   const server = serve(
     {
       fetch: createApp().fetch,
@@ -188,9 +208,11 @@ export function startHttpServer(): void {
       console.error(`memory-engine is already using port ${config.port}.`);
       console.error(`If it is already running, open http://localhost:${config.port}/viewer`);
       console.error(`Or run with another port: $env:PORT=3778; memoryengine`);
+      worker.stop();
       process.exit(1);
     }
 
+    worker.stop();
     throw error;
   });
 }
