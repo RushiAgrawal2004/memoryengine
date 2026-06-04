@@ -48,6 +48,9 @@ describe("viewer routes", () => {
     const audit = await app.request(
       `/viewer/data/audit?scope=${encodeURIComponent(scope)}`,
     );
+    const traces = await app.request(
+      `/viewer/data/traces?scope=${encodeURIComponent(scope)}`,
+    );
     const memories = await app.request(
       `/viewer/data/memories?scope=${encodeURIComponent(scope)}&q=viewer`,
     );
@@ -69,11 +72,13 @@ describe("viewer routes", () => {
     expect(html).toContain("Overview");
     expect(html).toContain("Timeline");
     expect(html).toContain("Profile");
+    expect(html).toContain("Traces");
     expect(overview.status).toBe(200);
     expect(graph.status).toBe(200);
     await expectRows(activity);
     await expectRows(profile);
     expect(audit.status).toBe(200);
+    expect(traces.status).toBe(200);
     await expectRows(memories);
     await expectRows(entities);
     await expectRows(edges);
@@ -81,6 +86,7 @@ describe("viewer routes", () => {
     await expectRows(episodes);
 
     const sql = getSqlClient();
+    await sql`delete from traces where scope = ${scope}`;
     await sql`delete from edges where scope = ${scope}`;
     await sql`delete from entities where scope = ${scope}`;
     await sql`delete from memories where scope = ${scope}`;

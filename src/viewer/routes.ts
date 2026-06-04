@@ -11,6 +11,7 @@ import {
   listViewerEpisodes,
   listViewerMemories,
   listViewerSessions,
+  listViewerTraces,
   ViewerListInput,
 } from "../db/viewer.js";
 import { config } from "../lib/config.js";
@@ -64,6 +65,10 @@ export function registerViewerRoutes(app: Hono): void {
 
   app.get("/viewer/data/audit", async (c) => {
     return c.json({ rows: await listViewerAudit(queryInput(c.req.query())) });
+  });
+
+  app.get("/viewer/data/traces", async (c) => {
+    return c.json({ rows: await listViewerTraces(queryInput(c.req.query())) });
   });
 
   app.get("/viewer/data/profile", async (c) => {
@@ -286,6 +291,7 @@ function viewerHtml(): string {
       <button data-tab="activity" aria-selected="false">Activity</button>
       <button data-tab="profile" aria-selected="false">Profile</button>
       <button data-tab="audit" aria-selected="false">Audit</button>
+      <button data-tab="traces" aria-selected="false">Traces</button>
       <button data-tab="lessons" aria-selected="false">Lessons</button>
       <button data-tab="actions" aria-selected="false">Actions</button>
       <button data-tab="crystals" aria-selected="false">Crystals</button>
@@ -320,6 +326,11 @@ function viewerHtml(): string {
         endpoint: "audit",
         empty: "No audit events yet. Invalidated, archived, superseded, and stale memories appear here.",
         columns: ["kind", "status", "detail", "scope", "created"]
+      },
+      traces: {
+        endpoint: "traces",
+        empty: "No traces yet. Retrieval and memory-write decisions will appear here after memory.search, activate, or remember runs.",
+        columns: ["kind", "summary", "scope", "query", "latency", "payload", "created"]
       }
     };
     const placeholders = {
@@ -535,6 +546,8 @@ function viewerHtml(): string {
       if (column === "ended") return '<td><code>' + escapeHtml(date(row.endedAt)) + '</code></td>';
       if (column === "session") return '<td><code>' + escapeHtml(row.sourceSession || row.sessionId || "") + '</code></td>';
       if (column === "confidence") return '<td>' + Number(row.confidence || 0).toFixed(2) + '</td>';
+      if (column === "latency") return '<td>' + (row.latencyMs == null ? "" : Number(row.latencyMs).toFixed(1) + "ms") + '</td>';
+      if (column === "payload") return '<td class="content"><code>' + escapeHtml(row.payload ? JSON.stringify(row.payload, null, 2) : "") + '</code></td>';
       if (column === "attrs") return '<td><code>' + escapeHtml(row.attrs ? JSON.stringify(row.attrs) : "") + '</code></td>';
       if (column === "status" || column === "type" || column === "kind" || column === "relation") {
         const cls = row[column] === "invalid" ? " danger" : row[column] === "needs_revalidation" ? " warn" : "";

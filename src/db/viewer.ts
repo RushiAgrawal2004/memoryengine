@@ -1,4 +1,5 @@
 import { getSqlClient } from "./client.js";
+import { listTraces } from "./traces.js";
 
 export interface ViewerMemory {
   id: string;
@@ -97,6 +98,17 @@ export interface ViewerAuditItem {
   kind: string;
   status: string;
   detail: string;
+  createdAt: Date;
+}
+
+export interface ViewerTrace {
+  id: string;
+  kind: string;
+  scope: string | null;
+  query: string | null;
+  summary: string;
+  payload: Record<string, unknown>;
+  latencyMs: number | null;
   createdAt: Date;
 }
 
@@ -483,6 +495,21 @@ export async function listViewerAudit(
   `;
 }
 
+export async function listViewerTraces(
+  input: ViewerListInput = {},
+): Promise<ViewerTrace[]> {
+  const traces = await listTraces({
+    q: input.q,
+    scope: input.scope,
+    limit: input.limit,
+  });
+
+  return traces.map((trace) => ({
+    ...trace,
+    summary: summarizeTrace(trace.kind, trace.payload),
+  }));
+}
+
 export async function getViewerProfile(
   input: ViewerListInput = {},
 ): Promise<ViewerProfile[]> {
@@ -579,4 +606,22 @@ function limitFor(value: number | undefined): number {
   }
 
   return Math.min(Math.max(Math.trunc(value), 1), MAX_LIMIT);
+}
+
+function summarizeTrace(kind: string, payload: Record<string, unknown>): string {
+  if (kind === "retrieve") {
+    const query = typeof payload.query === "string" ? payload.query : "";
+    const selected = Array.isArray(payload.finalSelectedIds)
+      ? payload.finalSelectedIds.length
+      : 0;
+    return `retrieve "${query}" -> ${selected} selected`;
+  }
+
+  if (kind === "ingest") {
+    const fact = typeof payload.fact === "string" ? payload.fact : "";
+    const op = typeof payload.chosenOp === "string" ? payload.chosenOp : "op";
+    return `${op}: ${fact}`;
+  }
+
+  return JSON.stringify(payload).slice(0, 160);
 }

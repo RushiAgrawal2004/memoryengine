@@ -45,6 +45,7 @@ describe("hybrid retrieve", () => {
         "npm handles scripts for this repository",
       );
     } finally {
+      await sql`delete from traces where scope = ${scope}`;
       await sql`delete from memories where scope = ${scope}`;
     }
   }, 30000);

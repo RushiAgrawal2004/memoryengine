@@ -2,6 +2,7 @@ import * as z from "zod/v4";
 import { getSqlClient } from "../db/client.js";
 import { syncMemoryVector } from "../db/embedding-vectors.js";
 import type { Anchor } from "../db/schema.js";
+import { saveTrace } from "../db/traces.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
 import { writeGraph } from "../graph/write.js";
@@ -13,6 +14,7 @@ const memoryOperationSchema = z.object({
   op: z.enum(["ADD", "UPDATE", "INVALIDATE", "NOOP"]),
   targetId: z.string().optional(),
   content: z.string().min(1),
+  rationale: z.string().optional(),
 });
 
 export type MemoryOperation = z.infer<typeof memoryOperationSchema>;
@@ -65,17 +67,31 @@ export async function ingestFacts(
         "For UPDATE, INVALIDATE, and NOOP, include targetId from the relevant candidate.",
         "For INVALIDATE, content must be the new replacement memory that should supersede the old one.",
         "Never create a duplicate ADD for a paraphrase of an existing memory.",
+        "Include a short rationale explaining why the operation was chosen.",
       ].join(" "),
       [
         `Fact: ${fact.fact}`,
         "Existing memories:",
         JSON.stringify(candidates),
-        "Return JSON with op, optional targetId, and content.",
+        "Return JSON with op, optional targetId, content, and rationale.",
       ].join("\n"),
       memoryOperationSchema,
     );
 
     ctx.decisionLogger?.({ fact: fact.fact, candidates, decision });
+    await saveTrace({
+      kind: "ingest",
+      scope,
+      query: fact.fact,
+      payload: {
+        fact: fact.fact,
+        candidateMemories: candidates,
+        chosenOp: decision.op,
+        targetId: decision.targetId,
+        content: decision.content,
+        rationale: decision.rationale ?? null,
+      },
+    });
     decisions.push({ ...decision, fact: fact.fact });
   }
 

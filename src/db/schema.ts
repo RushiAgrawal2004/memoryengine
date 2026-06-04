@@ -141,3 +141,21 @@ export const edges = pgTable(
       .where(sql`${table.tExpired} is null`),
   ],
 );
+
+export const traces = pgTable(
+  "traces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: text("kind").notNull(),
+    scope: text("scope"),
+    query: text("query"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    latencyMs: real("latency_ms"),
+    ...timestamps,
+  },
+  (table) => [
+    index("traces_created_at_idx").on(table.createdAt),
+    index("traces_kind_created_at_idx").on(table.kind, table.createdAt),
+    index("traces_scope_created_at_idx").on(table.scope, table.createdAt),
+  ],
+);

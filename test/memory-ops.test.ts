@@ -44,6 +44,7 @@ describe("ingestFacts", () => {
     setLLMForTest(undefined);
     const sql = getSqlClient();
     for (const scope of scopes.splice(0)) {
+      await sql`delete from traces where scope = ${scope}`;
       await sql`delete from memories where scope = ${scope}`;
     }
   });
