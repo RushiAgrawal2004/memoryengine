@@ -86,6 +86,10 @@ export class LocalHeuristicLLM implements LLM {
     }
 
     if (lowerSystem.includes("memory operation")) {
+      if (user.includes("Facts with candidates:")) {
+        return schema.parse(memoryOpBatchPayload(user));
+      }
+
       return schema.parse(memoryOpPayload(user));
     }
 
@@ -162,6 +166,27 @@ function memoryOpPayload(user: string): unknown {
   const fact = valueAfter(user, "Fact:");
   const existingJson = valueBetween(user, "Existing memories:", "Return");
   const existing = safeJsonParse<Array<{ id: string; content: string }>>(existingJson, []);
+  return decideMemoryOp(fact, existing);
+}
+
+function memoryOpBatchPayload(user: string): unknown {
+  const batchJson = valueBetween(user, "Facts with candidates:", "Return JSON array");
+  const batch = safeJsonParse<Array<{
+    factIndex: number;
+    fact: string;
+    candidates: Array<{ id: string; content: string }>;
+  }>>(batchJson, []);
+
+  return batch.map((item) => ({
+    factIndex: item.factIndex,
+    ...decideMemoryOp(item.fact, item.candidates),
+  }));
+}
+
+function decideMemoryOp(
+  fact: string,
+  existing: Array<{ id: string; content: string }>,
+): Record<string, unknown> {
   const factLower = fact.toLowerCase();
 
   const packageManagerTarget = existing.find((memory) =>

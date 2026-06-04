@@ -8,23 +8,42 @@ import { ingestFacts } from "../src/write/memory-ops.js";
 
 class TraceOpsLLM implements LLM {
   async json<T>(_system: string, user: string, schema: z.ZodType<T>): Promise<T> {
+    const batchJson = user.match(/Facts with candidates:\n(?<json>.*)\nReturn JSON array/s)?.groups?.json;
+    if (batchJson) {
+      const batch = JSON.parse(batchJson) as Array<{
+        factIndex: number;
+        fact: string;
+        candidates: Array<{ id: string }>;
+      }>;
+
+      return schema.parse(batch.map((item) => ({
+        factIndex: item.factIndex,
+        ...this.decisionFor(item.fact, item.candidates),
+      })));
+    }
+
     const fact = user.match(/Fact: (?<fact>.*)/)?.groups?.fact ?? "";
     const existingJson = user.match(/Existing memories:\n(?<json>.*)\nReturn/s)?.groups?.json ?? "[]";
     const existing = JSON.parse(existingJson) as Array<{ id: string }>;
-    const [prefix, ...rest] = fact.split(":");
-    const op = prefix.trim();
-    const content = rest.join(":").trim();
 
-    return schema.parse({
-      op,
-      content,
-      targetId: op === "ADD" ? undefined : existing[0]?.id,
-      rationale: `test chose ${op}`,
-    });
+    return schema.parse(this.decisionFor(fact, existing));
   }
 
   async chat(_system: string, user: string): Promise<string> {
     return user;
+  }
+
+  private decisionFor(fact: string, existing: Array<{ id: string }>): Record<string, unknown> {
+    const [prefix, ...rest] = fact.split(":");
+    const op = prefix.trim();
+    const content = rest.join(":").trim();
+
+    return {
+      op,
+      content,
+      targetId: op === "ADD" ? undefined : existing[0]?.id,
+      rationale: `test chose ${op}`,
+    };
   }
 }
 

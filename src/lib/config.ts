@@ -22,6 +22,8 @@ export interface Config {
   reflectEpisodeLimit: number;
   decayDays: number;
   decayFloor: number;
+  simNoopThreshold: number;
+  maxOpsPerRemember: number;
 }
 
 const DEFAULT_PORT = 3777;
@@ -34,6 +36,8 @@ const DEFAULT_CONSOLIDATE_CRON = "*/30 * * * *";
 const DEFAULT_REFLECT_EPISODE_LIMIT = 100;
 const DEFAULT_DECAY_DAYS = 30;
 const DEFAULT_DECAY_FLOOR = 0.2;
+const DEFAULT_SIM_NOOP_THRESHOLD = 0.94;
+const DEFAULT_MAX_OPS_PER_REMEMBER = 50;
 
 loadEnvFiles();
 
@@ -68,6 +72,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ),
     decayDays: parsePositiveInt(env.DECAY_DAYS, DEFAULT_DECAY_DAYS, "DECAY_DAYS"),
     decayFloor: parseFloatWithDefault(env.DECAY_FLOOR, DEFAULT_DECAY_FLOOR, "DECAY_FLOOR"),
+    simNoopThreshold: parseFloatWithDefault(
+      env.SIM_NOOP_THRESHOLD,
+      DEFAULT_SIM_NOOP_THRESHOLD,
+      "SIM_NOOP_THRESHOLD",
+    ),
+    maxOpsPerRemember: parsePositiveInt(
+      env.MAX_OPS_PER_REMEMBER,
+      DEFAULT_MAX_OPS_PER_REMEMBER,
+      "MAX_OPS_PER_REMEMBER",
+    ),
   };
 }
 

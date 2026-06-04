@@ -1,38 +1,73 @@
 import * as z from "zod/v4";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDb, getSqlClient } from "../src/db/client.js";
 import { saveMemory } from "../src/db/memories.js";
+import { config } from "../src/lib/config.js";
 import { LLM, setLLMForTest } from "../src/providers/llm.js";
 import { ingestFacts } from "../src/write/memory-ops.js";
 
 class FakeOpsLLM implements LLM {
+  calls = 0;
+
   async json<T>(_system: string, user: string, schema: z.ZodType<T>): Promise<T> {
+    this.calls += 1;
+    const batchJson = user.match(/Facts with candidates:\n(?<json>.*)\nReturn JSON array/s)?.groups?.json;
+    if (batchJson) {
+      const batch = JSON.parse(batchJson) as Array<{
+        factIndex: number;
+        fact: string;
+        candidates: Array<{ id: string }>;
+      }>;
+
+      return schema.parse(batch.map((item) => ({
+        factIndex: item.factIndex,
+        ...this.decisionFor(item.fact, item.candidates),
+      })));
+    }
+
     const fact = user.match(/Fact: (?<fact>.*)/)?.groups?.fact ?? "";
     const existingJson = user.match(/Existing memories:\n(?<json>.*)\nReturn/s)?.groups?.json ?? "[]";
     const existing = JSON.parse(existingJson) as Array<{ id: string }>;
-    const [prefix, ...rest] = fact.split(":");
-    const op = prefix.trim();
-    const content = rest.join(":").trim();
 
-    return schema.parse({
-      op,
-      content,
-      targetId: op === "ADD" ? undefined : existing[0]?.id,
-    });
+    return schema.parse(this.decisionFor(fact, existing));
   }
 
   async chat(_system: string, user: string): Promise<string> {
     return user;
+  }
+
+  private decisionFor(fact: string, existing: Array<{ id: string }>): Record<string, unknown> {
+    const [prefix, ...rest] = fact.split(":");
+    const op = prefix.trim();
+    const content = rest.join(":").trim();
+
+    return {
+      op,
+      content,
+      targetId: op === "ADD" ? undefined : existing[0]?.id,
+    };
+  }
+}
+
+class ThrowingLLM implements LLM {
+  async json<T>(): Promise<T> {
+    throw new Error("LLM should not be called");
+  }
+
+  async chat(): Promise<string> {
+    throw new Error("LLM should not be called");
   }
 }
 
 describe("ingestFacts", () => {
   const scopes: string[] = [];
   const originalEmbeddingsLocal = process.env.EMBEDDINGS_LOCAL;
+  const originalMaxOpsPerRemember = config.maxOpsPerRemember;
 
   beforeEach(() => {
     process.env.EMBEDDINGS_LOCAL = "1";
     setLLMForTest(new FakeOpsLLM());
+    config.maxOpsPerRemember = originalMaxOpsPerRemember;
   });
 
   afterEach(async () => {
@@ -42,6 +77,8 @@ describe("ingestFacts", () => {
       process.env.EMBEDDINGS_LOCAL = originalEmbeddingsLocal;
     }
     setLLMForTest(undefined);
+    config.maxOpsPerRemember = originalMaxOpsPerRemember;
+    vi.restoreAllMocks();
     const sql = getSqlClient();
     for (const scope of scopes.splice(0)) {
       await sql`delete from traces where scope = ${scope}`;
@@ -115,6 +152,69 @@ describe("ingestFacts", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.content).toBe("we use npm");
     expect(rows[0]?.status).toBe("active");
+  });
+
+  it("short-circuits exact duplicate facts without calling the LLM and bumps confidence", async () => {
+    const scope = testScope();
+    await saveMemory({ scope, content: "we use npm" });
+    setLLMForTest(new ThrowingLLM());
+
+    const operations = await ingestFacts([{ fact: "we use npm", temporalRefs: [] }], {
+      scope,
+    });
+
+    const rows = await memoriesForScope(scope);
+    expect(operations[0]?.op).toBe("NOOP");
+    expect(operations[0]?.targetId).toBe(rows[0]?.id);
+    expect(operations[0]?.memoryId).toBe(rows[0]?.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.confidence).toBeGreaterThan(0.5);
+    expect(rows[0]?.lastUsedAt).not.toBeNull();
+  });
+
+  it("batches remaining LLM op decisions into one call", async () => {
+    const scope = testScope();
+    const llm = new FakeOpsLLM();
+    setLLMForTest(llm);
+
+    const operations = await ingestFacts(
+      [
+        { fact: "ADD: first batched fact", temporalRefs: [] },
+        { fact: "ADD: second batched fact", temporalRefs: [] },
+        { fact: "ADD: third batched fact", temporalRefs: [] },
+      ],
+      { scope },
+    );
+
+    const rows = await memoriesForScope(scope);
+    expect(llm.calls).toBe(1);
+    expect(operations.map((operation) => operation.content)).toEqual([
+      "first batched fact",
+      "second batched fact",
+      "third batched fact",
+    ]);
+    expect(rows).toHaveLength(3);
+  });
+
+  it("guards excessive operation counts and logs a warning", async () => {
+    const scope = testScope();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    config.maxOpsPerRemember = 2;
+
+    const operations = await ingestFacts(
+      [
+        { fact: "ADD: keep one", temporalRefs: [] },
+        { fact: "ADD: keep two", temporalRefs: [] },
+        { fact: "ADD: drop three", temporalRefs: [] },
+      ],
+      { scope },
+    );
+
+    const rows = await memoriesForScope(scope);
+    expect(operations.map((operation) => operation.content)).toEqual(["keep one", "keep two"]);
+    expect(rows.map((row) => row.content)).toEqual(["keep one", "keep two"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("MAX_OPS_PER_REMEMBER exceeded"));
+    warn.mockRestore();
   });
 
   function testScope(): string {

@@ -3,10 +3,12 @@ import { getSqlClient } from "../db/client.js";
 import { syncMemoryVector } from "../db/embedding-vectors.js";
 import type { Anchor } from "../db/schema.js";
 import { saveTrace } from "../db/traces.js";
+import { config } from "../lib/config.js";
 import { getEmbeddings } from "../providers/embeddings.js";
 import { getLLM } from "../providers/llm.js";
 import { writeGraph } from "../graph/write.js";
 import { currentRepoRef, projectScope } from "../grounding/git.js";
+import { vectorRecall } from "../read/recall.js";
 import { retrieve } from "../read/retrieve.js";
 import { ExtractedEntity, ExtractedFact, ExtractedRelation } from "./extract.js";
 
@@ -16,6 +18,11 @@ const memoryOperationSchema = z.object({
   content: z.string().min(1),
   rationale: z.string().optional(),
 });
+const batchMemoryOperationSchema = z.array(
+  memoryOperationSchema.extend({
+    factIndex: z.number().int().nonnegative(),
+  }),
+);
 
 export type MemoryOperation = z.infer<typeof memoryOperationSchema>;
 
@@ -48,52 +55,80 @@ export async function ingestFacts(
   const repoRef = await currentRepoRef();
   const scope = ctx.scope ?? (repoRef ? await projectScope() : DEFAULT_SCOPE);
   const anchors = anchorsFromEntities(ctx.entities ?? [], repoRef?.commit);
-  const decisions: AppliedMemoryOperation[] = [];
+  const limitedFacts = facts.slice(0, config.maxOpsPerRemember);
+  const decisionSlots: Array<AppliedMemoryOperation | undefined> = [];
+  const pending: Array<{
+    factIndex: number;
+    fact: ExtractedFact;
+    candidates: Array<{ id: string; content: string }>;
+  }> = [];
 
-  for (const fact of facts) {
+  if (facts.length > limitedFacts.length) {
+    console.warn(
+      `[memory-engine] MAX_OPS_PER_REMEMBER exceeded: processing ${limitedFacts.length} of ${facts.length} extracted facts`,
+    );
+  }
+
+  for (let factIndex = 0; factIndex < limitedFacts.length; factIndex += 1) {
+    const fact = limitedFacts[factIndex];
+    const localNoop = await findLocalNoopCandidate(fact.fact, scope);
     const similar = await retrieve(fact.fact, scope, 5);
     const candidates = similar.map((memory) => ({
       id: memory.id,
       content: memory.content,
     }));
-    const decision = await getLLM().json(
-      [
-        "You are a memory operation decider for a coding-agent memory store.",
-        "Choose exactly one operation for the new fact.",
-        "ADD only when none of the candidate memories already represent the same subject/fact.",
-        "NOOP when the new fact is merely a restatement of an existing active memory.",
-        "UPDATE when the new fact keeps the same fact true but improves, clarifies, or adds useful detail.",
-        "INVALIDATE when the new fact contradicts, replaces, reverses, or says the project moved away from an existing memory.",
-        "For UPDATE, INVALIDATE, and NOOP, include targetId from the relevant candidate.",
-        "For INVALIDATE, content must be the new replacement memory that should supersede the old one.",
-        "Never create a duplicate ADD for a paraphrase of an existing memory.",
-        "Include a short rationale explaining why the operation was chosen.",
-      ].join(" "),
-      [
-        `Fact: ${fact.fact}`,
-        "Existing memories:",
-        JSON.stringify(candidates),
-        "Return JSON with op, optional targetId, content, and rationale.",
-      ].join("\n"),
-      memoryOperationSchema,
-    );
+    if (localNoop && !candidates.some((candidate) => candidate.id === localNoop.id)) {
+      candidates.unshift({ id: localNoop.id, content: localNoop.content });
+    }
 
-    ctx.decisionLogger?.({ fact: fact.fact, candidates, decision });
-    await saveTrace({
-      kind: "ingest",
-      scope,
-      query: fact.fact,
-      payload: {
-        fact: fact.fact,
-        candidateMemories: candidates,
-        chosenOp: decision.op,
-        targetId: decision.targetId,
-        content: decision.content,
-        rationale: decision.rationale ?? null,
-      },
-    });
-    decisions.push({ ...decision, fact: fact.fact });
+    if (localNoop) {
+      const decision: MemoryOperation = {
+        op: "NOOP",
+        targetId: localNoop.id,
+        content: localNoop.content,
+        rationale: localNoop.rationale,
+      };
+      await recordDecision({ scope, fact: fact.fact, candidates, decision, ctx });
+      decisionSlots[factIndex] = { ...decision, fact: fact.fact };
+      continue;
+    }
+
+    pending.push({ factIndex, fact, candidates });
   }
+
+  if (pending.length > 0) {
+    const batchDecisions = await decideMemoryOpsBatch(pending);
+    const byIndex = new Map(batchDecisions.map((decision) => [decision.factIndex, decision]));
+
+    for (const item of pending) {
+      const batchDecision = byIndex.get(item.factIndex);
+      const decision: MemoryOperation = batchDecision
+        ? {
+            op: batchDecision.op,
+            targetId: batchDecision.targetId,
+            content: batchDecision.content,
+            rationale: batchDecision.rationale,
+          }
+        : {
+            op: "ADD",
+            content: item.fact.fact,
+            rationale: "LLM batch response omitted this fact; defaulted to ADD.",
+          };
+
+      await recordDecision({
+        scope,
+        fact: item.fact.fact,
+        candidates: item.candidates,
+        decision,
+        ctx,
+      });
+      decisionSlots[item.factIndex] = { ...decision, fact: item.fact.fact };
+    }
+  }
+
+  const decisions = decisionSlots.filter((decision): decision is AppliedMemoryOperation =>
+    Boolean(decision),
+  );
 
   const embeddings = await getEmbeddings().embed(
     decisions
@@ -108,7 +143,18 @@ export async function ingestFacts(
 
     for (const decision of decisions) {
       if (decision.op === "NOOP") {
-        results.push(decision);
+        if (decision.targetId) {
+          await tx`
+            update memories
+            set
+              confidence = least(confidence + 0.05, 1.0),
+              last_used_at = now()
+            where id = ${decision.targetId}
+              and scope = ${scope}
+              and status = 'active'
+          `;
+        }
+        results.push({ ...decision, memoryId: decision.targetId });
         continue;
       }
 
@@ -235,6 +281,116 @@ export async function ingestFacts(
   }
 
   return applied;
+}
+
+async function decideMemoryOpsBatch(
+  pending: Array<{
+    factIndex: number;
+    fact: ExtractedFact;
+    candidates: Array<{ id: string; content: string }>;
+  }>,
+): Promise<z.infer<typeof batchMemoryOperationSchema>> {
+  return getLLM().json(
+    [
+      "You are a memory operation decider for a coding-agent memory store.",
+      "Choose exactly one operation for each new fact.",
+      "ADD only when none of the candidate memories already represent the same subject/fact.",
+      "NOOP when the new fact is merely a restatement of an existing active memory.",
+      "UPDATE when the new fact keeps the same fact true but improves, clarifies, or adds useful detail.",
+      "INVALIDATE when the new fact contradicts, replaces, reverses, or says the project moved away from an existing memory.",
+      "For UPDATE, INVALIDATE, and NOOP, include targetId from the relevant candidate.",
+      "For INVALIDATE, content must be the new replacement memory that should supersede the old one.",
+      "Never create a duplicate ADD for a paraphrase of an existing memory.",
+      "Include a short rationale explaining why each operation was chosen.",
+      "Return one JSON array item per input fact, preserving factIndex.",
+    ].join(" "),
+    [
+      "Facts with candidates:",
+      JSON.stringify(
+        pending.map((item) => ({
+          factIndex: item.factIndex,
+          fact: item.fact.fact,
+          candidates: item.candidates,
+        })),
+      ),
+      "Return JSON array items with factIndex, op, optional targetId, content, and rationale.",
+    ].join("\n"),
+    batchMemoryOperationSchema,
+  );
+}
+
+async function recordDecision(input: {
+  scope: string;
+  fact: string;
+  candidates: Array<{ id: string; content: string }>;
+  decision: MemoryOperation;
+  ctx: IngestFactsContext;
+}): Promise<void> {
+  input.ctx.decisionLogger?.({
+    fact: input.fact,
+    candidates: input.candidates,
+    decision: input.decision,
+  });
+  await saveTrace({
+    kind: "ingest",
+    scope: input.scope,
+    query: input.fact,
+    payload: {
+      fact: input.fact,
+      candidateMemories: input.candidates,
+      chosenOp: input.decision.op,
+      targetId: input.decision.targetId,
+      content: input.decision.content,
+      rationale: input.decision.rationale ?? null,
+    },
+  });
+}
+
+async function findLocalNoopCandidate(
+  fact: string,
+  scope: string,
+): Promise<{ id: string; content: string; rationale: string } | undefined> {
+  const exact = await findExactActiveMemory(fact, scope);
+  if (exact) {
+    return {
+      ...exact,
+      rationale: "Short-circuited before LLM because fact exactly matches an active memory.",
+    };
+  }
+
+  const embeddings = getEmbeddings();
+  if (!embeddings.semantic) {
+    return undefined;
+  }
+
+  const [nearest] = await vectorRecall(fact, scope, 1);
+  if (nearest && nearest.rank >= config.simNoopThreshold) {
+    return {
+      id: nearest.id,
+      content: nearest.content,
+      rationale: `Short-circuited before LLM because similarity ${nearest.rank.toFixed(4)} >= SIM_NOOP_THRESHOLD ${config.simNoopThreshold}.`,
+    };
+  }
+
+  return undefined;
+}
+
+async function findExactActiveMemory(
+  fact: string,
+  scope: string,
+): Promise<{ id: string; content: string } | undefined> {
+  const sql = getSqlClient();
+  const [row] = await sql<Array<{ id: string; content: string }>>`
+    select id, content
+    from memories
+    where scope = ${scope}
+      and status = 'active'
+      and lower(btrim(content)) = lower(btrim(${fact}))
+    order by created_at desc
+    limit 1
+  `;
+
+  return row;
 }
 
 function anchorsFromEntities(
