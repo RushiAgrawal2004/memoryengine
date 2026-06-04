@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { closeDb, checkDatabase } from "./db/client.js";
 import { searchMemories } from "./db/memories.js";
 import { config } from "./lib/config.js";
@@ -87,8 +90,9 @@ async function runActivate(): Promise<void> {
 
 function printConnect(agent: string | undefined): void {
   const target = agent ?? "codex";
-  const nodePath = process.execPath.replaceAll("\\", "/");
-  const serverPath = `${process.cwd().replaceAll("\\", "/")}/dist/src/index.js`;
+  const nodePath = slashPath(process.execPath);
+  const root = packageRoot();
+  const serverPath = `${slashPath(root)}/dist/src/index.js`;
   const mcpConfig = {
     mcpServers: {
       "memory-engine": {
@@ -113,10 +117,30 @@ function printConnect(agent: string | undefined): void {
   if (target === "claude-code") {
     console.log("");
     console.log("Claude Code hook command examples:");
-    console.log(`node ${process.cwd().replaceAll("\\", "/")}/hooks/claude-code/session-start.mjs`);
-    console.log(`node ${process.cwd().replaceAll("\\", "/")}/hooks/claude-code/post-tool-use.mjs`);
-    console.log(`node ${process.cwd().replaceAll("\\", "/")}/hooks/claude-code/stop.mjs`);
+    console.log(`node ${slashPath(root)}/hooks/claude-code/session-start.mjs`);
+    console.log(`node ${slashPath(root)}/hooks/claude-code/post-tool-use.mjs`);
+    console.log(`node ${slashPath(root)}/hooks/claude-code/stop.mjs`);
   }
+}
+
+function packageRoot(): string {
+  let current = path.dirname(fileURLToPath(import.meta.url));
+
+  while (true) {
+    if (existsSync(path.join(current, "package.json"))) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return process.cwd();
+    }
+    current = parent;
+  }
+}
+
+function slashPath(value: string): string {
+  return value.replaceAll("\\", "/");
 }
 
 async function runDoctor(): Promise<void> {
