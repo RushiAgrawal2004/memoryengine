@@ -33,6 +33,21 @@ describe("viewer routes", () => {
     });
 
     const page = await app.request("/viewer");
+    const overview = await app.request(
+      `/viewer/data/overview?scope=${encodeURIComponent(scope)}`,
+    );
+    const graph = await app.request(
+      `/viewer/data/graph?scope=${encodeURIComponent(scope)}`,
+    );
+    const activity = await app.request(
+      `/viewer/data/activity?scope=${encodeURIComponent(scope)}&q=viewer`,
+    );
+    const profile = await app.request(
+      `/viewer/data/profile?scope=${encodeURIComponent(scope)}`,
+    );
+    const audit = await app.request(
+      `/viewer/data/audit?scope=${encodeURIComponent(scope)}`,
+    );
     const memories = await app.request(
       `/viewer/data/memories?scope=${encodeURIComponent(scope)}&q=viewer`,
     );
@@ -49,7 +64,16 @@ describe("viewer routes", () => {
       `/viewer/data/episodes?scope=${encodeURIComponent(scope)}&q=viewer`,
     );
 
-    expect(await page.text()).toContain("Memory Engine Viewer");
+    const html = await page.text();
+    expect(html).toContain("Memory Engine Dashboard");
+    expect(html).toContain("Overview");
+    expect(html).toContain("Timeline");
+    expect(html).toContain("Profile");
+    expect(overview.status).toBe(200);
+    expect(graph.status).toBe(200);
+    await expectRows(activity);
+    await expectRows(profile);
+    expect(audit.status).toBe(200);
     await expectRows(memories);
     await expectRows(entities);
     await expectRows(edges);
