@@ -35,8 +35,28 @@ export interface Anchor {
   commit?: string;
 }
 
+export const chatSessions = pgTable(
+  "chat_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    scope: text("scope").notNull(),
+    title: text("title"),
+    task: text("task"),
+    agent: text("agent"),
+    status: text("status").notNull().default("active"),
+    repoRef: jsonb("repo_ref").$type<RepoRef>(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index("chat_sessions_scope_started_idx").on(table.scope, table.startedAt),
+  ],
+);
+
 export const episodes = pgTable("episodes", {
   id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id").references(() => chatSessions.id),
   scope: text("scope").notNull(),
   kind: text("kind").notNull(),
   content: text("content").notNull(),
@@ -62,6 +82,7 @@ export const memories = pgTable(
     tCreated: timestamp("t_created", { withTimezone: true }).notNull().defaultNow(),
     tExpired: timestamp("t_expired", { withTimezone: true }),
     sourceEpisode: uuid("source_episode").references(() => episodes.id),
+    sourceSession: uuid("source_session").references(() => chatSessions.id),
     repoRef: jsonb("repo_ref").$type<RepoRef>(),
     anchors: jsonb("anchors").$type<Anchor[]>(),
     attrs: jsonb("attrs").$type<Record<string, unknown>>(),

@@ -189,7 +189,7 @@ Add this MCP server to your agent config:
 }
 ```
 
-Verify `memory.activate`, `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list.
+Verify `memory.activate`, `memory.search`, `memory.remember`, and `memory.audit` appear in the agent's tool list. `memory.activate` starts a saved chat session so multiple Codex/Claude sessions can be tracked under the same project scope.
 
 In a normal chat window, say:
 

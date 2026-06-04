@@ -4,6 +4,7 @@ import {
   listViewerEntities,
   listViewerEpisodes,
   listViewerMemories,
+  listViewerSessions,
   ViewerListInput,
 } from "../db/viewer.js";
 
@@ -12,6 +13,10 @@ export function registerViewerRoutes(app: Hono): void {
 
   app.get("/viewer/data/memories", async (c) => {
     return c.json({ rows: await listViewerMemories(queryInput(c.req.query())) });
+  });
+
+  app.get("/viewer/data/sessions", async (c) => {
+    return c.json({ rows: await listViewerSessions(queryInput(c.req.query())) });
   });
 
   app.get("/viewer/data/entities", async (c) => {
@@ -195,6 +200,7 @@ function viewerHtml(): string {
     </div>
     <nav class="tabs" aria-label="Viewer tabs">
       <button data-tab="memories" aria-selected="true">Memories</button>
+      <button data-tab="sessions" aria-selected="false">Sessions</button>
       <button data-tab="entities" aria-selected="false">Entities</button>
       <button data-tab="edges" aria-selected="false">Edges</button>
       <button data-tab="episodes" aria-selected="false">Episodes</button>
@@ -206,7 +212,11 @@ function viewerHtml(): string {
     const tabs = {
       memories: {
         empty: "No memories found. Use memory.remember or POST /remember to populate this scope.",
-        columns: ["status", "type", "content", "scope", "confidence", "validity", "created"]
+        columns: ["status", "type", "content", "scope", "session", "confidence", "validity", "created"]
+      },
+      sessions: {
+        empty: "No sessions found. Use memory.activate at the start of a chat window.",
+        columns: ["status", "title", "task", "agent", "scope", "memoryCount", "episodeCount", "started", "ended"]
       },
       entities: {
         empty: "No entities found. Remember code facts with files, symbols, or dependencies to build the graph.",
@@ -218,7 +228,7 @@ function viewerHtml(): string {
       },
       episodes: {
         empty: "No episodes found. Capture hooks and memory.remember create episode history.",
-        columns: ["kind", "source", "content", "scope", "occurred"]
+        columns: ["kind", "source", "content", "scope", "session", "occurred"]
       }
     };
     let active = "memories";
@@ -277,6 +287,9 @@ function viewerHtml(): string {
       if (column === "validity") return '<td><code>' + escapeHtml(validity(row)) + '</code></td>';
       if (column === "created") return '<td><code>' + escapeHtml(date(row.createdAt)) + '</code></td>';
       if (column === "occurred") return '<td><code>' + escapeHtml(date(row.occurredAt)) + '</code></td>';
+      if (column === "started") return '<td><code>' + escapeHtml(date(row.startedAt)) + '</code></td>';
+      if (column === "ended") return '<td><code>' + escapeHtml(date(row.endedAt)) + '</code></td>';
+      if (column === "session") return '<td><code>' + escapeHtml(row.sourceSession || row.sessionId || "") + '</code></td>';
       if (column === "confidence") return '<td>' + Number(row.confidence || 0).toFixed(2) + '</td>';
       if (column === "attrs") return '<td><code>' + escapeHtml(row.attrs ? JSON.stringify(row.attrs) : "") + '</code></td>';
       if (column === "status" || column === "type" || column === "kind" || column === "relation") {

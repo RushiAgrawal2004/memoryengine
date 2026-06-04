@@ -70,6 +70,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
       scope?: unknown;
       cwd?: unknown;
       limit?: unknown;
+      agent?: unknown;
     } = await c.req.json().catch(() => ({}));
 
     const result = await activateMemory({
@@ -77,6 +78,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
       scope: typeof body.scope === "string" ? body.scope : undefined,
       cwd: typeof body.cwd === "string" ? body.cwd : undefined,
       limit: typeof body.limit === "number" ? body.limit : undefined,
+      agent: typeof body.agent === "string" ? body.agent : undefined,
     });
 
     return c.json(result);
@@ -86,6 +88,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
     const body = await c.req.json<{
       text?: unknown;
       scope?: unknown;
+      sessionId?: unknown;
     }>();
 
     if (typeof body.text !== "string" || !body.text.trim()) {
@@ -95,6 +98,7 @@ export function createApp(options: { checkDatabase?: () => Promise<boolean> } = 
     const result = await remember({
       text: body.text,
       scope: typeof body.scope === "string" ? body.scope : undefined,
+      sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined,
     });
 
     return c.json(result);

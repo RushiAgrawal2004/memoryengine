@@ -3,6 +3,7 @@ import { currentRepoRef, projectScope } from "../grounding/git.js";
 
 export interface CapturedEpisode {
   id: string;
+  sessionId?: string;
   content: string;
   scope: string;
   occurredAt: Date;
@@ -13,6 +14,7 @@ export interface CaptureEpisodeInput {
   scope?: string;
   source?: string;
   kind?: string;
+  sessionId?: string;
   occurredAt?: Date;
 }
 
@@ -25,8 +27,9 @@ export async function captureEpisode(input: CaptureEpisodeInput): Promise<Captur
   const scope = input.scope ?? (repoRef ? await projectScope() : DEFAULT_SCOPE);
 
   const [row] = await sql<Array<{ id: string; occurredAt: Date }>>`
-    insert into episodes (scope, kind, content, source, repo_ref, occurred_at)
+    insert into episodes (session_id, scope, kind, content, source, repo_ref, occurred_at)
     values (
+      ${input.sessionId ?? null},
       ${scope},
       ${input.kind ?? "message"},
       ${input.text},
@@ -39,6 +42,7 @@ export async function captureEpisode(input: CaptureEpisodeInput): Promise<Captur
 
   return {
     id: row.id,
+    sessionId: input.sessionId,
     content: input.text,
     scope,
     occurredAt: row.occurredAt,

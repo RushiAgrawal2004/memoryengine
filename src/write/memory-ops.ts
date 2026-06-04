@@ -20,6 +20,7 @@ export type MemoryOperation = z.infer<typeof memoryOperationSchema>;
 export interface IngestFactsContext {
   scope?: string;
   sourceEpisode?: string;
+  sourceSession?: string;
   entities?: ExtractedEntity[];
   relations?: ExtractedRelation[];
 }
@@ -89,6 +90,7 @@ export async function ingestFacts(
             content,
             embedding,
             source_episode,
+            source_session,
             repo_ref,
             anchors
           )
@@ -98,6 +100,7 @@ export async function ingestFacts(
             ${decision.content},
             ${tx.json(embedding)},
             ${ctx.sourceEpisode ?? null},
+            ${ctx.sourceSession ?? null},
             ${repoRef ? tx.json(repoRef as never) : null},
             ${anchors.length > 0 ? tx.json(anchors as never) : null}
           )
@@ -119,6 +122,7 @@ export async function ingestFacts(
             embedding = ${tx.json(embedding)},
             repo_ref = ${repoRef ? tx.json(repoRef as never) : null},
             anchors = ${anchors.length > 0 ? tx.json(anchors as never) : null},
+            source_session = coalesce(${ctx.sourceSession ?? null}, source_session),
             confidence = least(confidence + 0.1, 1.0),
             last_used_at = now()
           where id = ${decision.targetId}
@@ -146,9 +150,10 @@ export async function ingestFacts(
           type,
           scope,
           content,
-          embedding,
-          source_episode,
-          repo_ref,
+            embedding,
+            source_episode,
+            source_session,
+            repo_ref,
           anchors,
           supersedes
         )
@@ -158,6 +163,7 @@ export async function ingestFacts(
           ${decision.content},
           ${tx.json(embedding)},
           ${ctx.sourceEpisode ?? null},
+          ${ctx.sourceSession ?? null},
           ${repoRef ? tx.json(repoRef as never) : null},
           ${anchors.length > 0 ? tx.json(anchors as never) : null},
           ${decision.targetId}

@@ -20,11 +20,27 @@ export function createMemoryMcpServer(): McpServer {
         task: z.string().optional(),
         scope: z.string().optional(),
         cwd: z.string().optional(),
+        agent: z.string().optional(),
         limit: z.number().int().positive().max(20).optional(),
       },
       outputSchema: {
         activated: z.boolean(),
         scope: z.string(),
+        session: z.object({
+          id: z.string(),
+          scope: z.string(),
+          title: z.string().nullable(),
+          task: z.string().nullable(),
+          agent: z.string().nullable(),
+          status: z.string(),
+          repoRef: z.object({
+            repo: z.string(),
+            branch: z.string(),
+            commit: z.string(),
+          }).nullable(),
+          startedAt: z.string(),
+          endedAt: z.string().nullable(),
+        }),
         repo: z.object({
           repo: z.string(),
           branch: z.string(),
@@ -45,8 +61,8 @@ export function createMemoryMcpServer(): McpServer {
         instructions: z.array(z.string()),
       },
     },
-    async ({ task, scope, cwd, limit }) => {
-      const result = await activateMemory({ task, scope, cwd, limit });
+    async ({ task, scope, cwd, agent, limit }) => {
+      const result = await activateMemory({ task, scope, cwd, agent, limit });
       const structuredContent: Record<string, unknown> = { ...result };
 
       return {
@@ -127,9 +143,11 @@ export function createMemoryMcpServer(): McpServer {
       inputSchema: {
         text: z.string().min(1),
         scope: z.string().optional(),
+        sessionId: z.string().optional(),
       },
       outputSchema: {
         episodeId: z.string(),
+        sessionId: z.string().optional(),
         facts: z.array(z.string()),
         operations: z.array(
           z.object({
@@ -146,8 +164,8 @@ export function createMemoryMcpServer(): McpServer {
         }),
       },
     },
-    async ({ text, scope }) => {
-      const result = await remember({ text, scope });
+    async ({ text, scope, sessionId }) => {
+      const result = await remember({ text, scope, sessionId });
       const structuredContent: Record<string, unknown> = { ...result };
 
       return {

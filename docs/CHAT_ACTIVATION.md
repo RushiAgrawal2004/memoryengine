@@ -24,6 +24,7 @@ The agent should call:
 The activation response includes:
 
 - resolved scope, usually `project:<repo>`
+- saved session id for this chat window
 - current repo ref when available
 - relevant memories for the task
 - dashboard URL
@@ -36,6 +37,8 @@ http://localhost:3777/viewer
 ```
 
 Filter by the returned scope to see what the chat is remembering.
+
+Use the Sessions tab to see each activated chat window. Use the returned `session.id` on later `memory.remember` calls so new memories and episodes attach to the right session.
 
 ## MCP Config
 

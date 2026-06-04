@@ -30,6 +30,9 @@ describe("viewer routes", () => {
     const edges = await app.request(
       `/viewer/data/edges?scope=${encodeURIComponent(scope)}&q=depends`,
     );
+    const sessions = await app.request(
+      `/viewer/data/sessions?scope=${encodeURIComponent(scope)}`,
+    );
     const episodes = await app.request(
       `/viewer/data/episodes?scope=${encodeURIComponent(scope)}&q=viewer`,
     );
@@ -38,6 +41,7 @@ describe("viewer routes", () => {
     await expectRows(memories);
     await expectRows(entities);
     await expectRows(edges);
+    expect(sessions.status).toBe(200);
     await expectRows(episodes);
 
     const sql = getSqlClient();
@@ -45,6 +49,7 @@ describe("viewer routes", () => {
     await sql`delete from entities where scope = ${scope}`;
     await sql`delete from memories where scope = ${scope}`;
     await sql`delete from episodes where scope = ${scope}`;
+    await sql`delete from chat_sessions where scope = ${scope}`;
   }, 10000);
 });
 

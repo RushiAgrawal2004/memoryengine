@@ -6,6 +6,7 @@ export interface ViewerMemory {
   scope: string;
   content: string;
   status: string;
+  sourceSession: string | null;
   confidence: number;
   tValid: Date | null;
   tInvalid: Date | null;
@@ -39,11 +40,26 @@ export interface ViewerEdge {
 
 export interface ViewerEpisode {
   id: string;
+  sessionId: string | null;
   scope: string;
   kind: string;
   source: string;
   content: string;
   occurredAt: Date;
+  createdAt: Date;
+}
+
+export interface ViewerSession {
+  id: string;
+  scope: string;
+  title: string | null;
+  task: string | null;
+  agent: string | null;
+  status: string;
+  memoryCount: number;
+  episodeCount: number;
+  startedAt: Date;
+  endedAt: Date | null;
   createdAt: Date;
 }
 
@@ -70,6 +86,7 @@ export async function listViewerMemories(
       scope,
       content,
       status,
+      source_session as "sourceSession",
       confidence,
       t_valid as "tValid",
       t_invalid as "tInvalid",
@@ -80,6 +97,42 @@ export async function listViewerMemories(
     where (${scope}::text is null or scope = ${scope})
       and (${query}::text is null or content ilike ${query})
     order by created_at desc
+    limit ${limitFor(input.limit)}
+  `;
+}
+
+export async function listViewerSessions(
+  input: ViewerListInput = {},
+): Promise<ViewerSession[]> {
+  const sql = getSqlClient();
+  const query = searchPattern(input.q);
+  const scope = normalized(input.scope);
+
+  return sql<ViewerSession[]>`
+    select
+      chat_sessions.id,
+      chat_sessions.scope,
+      chat_sessions.title,
+      chat_sessions.task,
+      chat_sessions.agent,
+      chat_sessions.status,
+      count(distinct memories.id)::int as "memoryCount",
+      count(distinct episodes.id)::int as "episodeCount",
+      chat_sessions.started_at as "startedAt",
+      chat_sessions.ended_at as "endedAt",
+      chat_sessions.created_at as "createdAt"
+    from chat_sessions
+    left join memories on memories.source_session = chat_sessions.id
+    left join episodes on episodes.session_id = chat_sessions.id
+    where (${scope}::text is null or chat_sessions.scope = ${scope})
+      and (
+        ${query}::text is null
+        or chat_sessions.title ilike ${query}
+        or chat_sessions.task ilike ${query}
+        or chat_sessions.agent ilike ${query}
+      )
+    group by chat_sessions.id
+    order by chat_sessions.started_at desc
     limit ${limitFor(input.limit)}
   `;
 }
@@ -151,6 +204,7 @@ export async function listViewerEpisodes(
   return sql<ViewerEpisode[]>`
     select
       id,
+      session_id as "sessionId",
       scope,
       kind,
       source,

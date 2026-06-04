@@ -22,6 +22,13 @@
       "when": 1780516320000,
       "tag": "0002_optional_pgvector",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780607700000,
+      "tag": "0003_chat_sessions",
+      "breakpoints": true
     }
   ]
 }

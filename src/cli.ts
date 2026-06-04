@@ -79,7 +79,8 @@ async function runActivate(): Promise<void> {
   const positionalTask = args.slice(1).join(" ");
   const task = valueAfter("--task") ?? (positionalTask ? positionalTask : undefined);
   const scope = valueAfter("--scope");
-  const result = await activateMemory({ task, scope });
+  const agent = valueAfter("--agent") ?? "cli";
+  const result = await activateMemory({ task, scope, agent });
 
   console.log(JSON.stringify(result, null, 2));
 }
