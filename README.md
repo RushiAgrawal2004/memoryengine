@@ -238,3 +238,9 @@ Capture hooks post to `/hook/capture`. The server writes only when it can find a
 active `memory.activate` session for the project scope; otherwise the hook returns
 quietly and nothing is stored. That gives automatic capture after activation
 without storing every random chat.
+
+To smoke-test automatic capture after activating a chat session:
+
+```sh
+memoryengine hook-test --scope "project:MEMORY ENGINE TEST"
+```

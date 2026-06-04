@@ -32,6 +32,9 @@ async function main(): Promise<void> {
     case "connect":
       printConnect(args[1]);
       return;
+    case "hook-test":
+      await runHookTest();
+      return;
     case "doctor":
       await runDoctor();
       return;
@@ -88,6 +91,27 @@ async function runActivate(): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
+async function runHookTest(): Promise<void> {
+  const scope = valueAfter("--scope");
+  const cwd = valueAfter("--cwd") ?? process.cwd();
+  const text = valueAfter("--text") ?? "Codex hook test: verified automatic capture path.";
+  const response = await fetch(`http://localhost:${config.port}/hook/capture`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scope, cwd, text }),
+    signal: AbortSignal.timeout(5000),
+  });
+  const responseText = await response.text();
+  const payload = parseJsonResponse(responseText) ?? {
+    captured: false,
+    status: response.status,
+    error: responseText || "non-json response",
+    hint: "Restart memoryengine so the running daemon has /hook/capture.",
+  };
+
+  console.log(JSON.stringify(payload, null, 2));
+}
+
 function printConnect(agent: string | undefined): void {
   const target = agent ?? "codex";
   const nodePath = slashPath(process.execPath);
@@ -110,8 +134,13 @@ function printConnect(agent: string | undefined): void {
 
   if (target === "codex") {
     console.log("");
+    console.log("Optional Codex hook commands for automatic capture after memory.activate:");
+    console.log(`session-start: node ${slashPath(root)}/hooks/codex/session-start.mjs`);
+    console.log(`post-tool-use: node ${slashPath(root)}/hooks/codex/post-tool-use.mjs`);
+    console.log(`stop: node ${slashPath(root)}/hooks/codex/stop.mjs`);
+    console.log("");
     console.log("After adding the config, start a chat with:");
-    console.log('Activate memory for this project with task "build a simple todo list web app". Search memory first. While building, remember durable decisions and completed changes.');
+    console.log('Activate memory for this project with task "build a simple todo list web app". Search memory first. Automatic hooks can capture tool activity after activation.');
   }
 
   if (target === "claude-code") {
@@ -141,6 +170,14 @@ function packageRoot(): string {
 
 function slashPath(value: string): string {
   return value.replaceAll("\\", "/");
+}
+
+function parseJsonResponse(value: string): unknown | undefined {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
 }
 
 async function runDoctor(): Promise<void> {
@@ -175,6 +212,7 @@ Usage:
   memoryengine activate --task "build todo app"
   memoryengine connect codex
   memoryengine connect claude-code
+  memoryengine hook-test --scope "project:my-app"
   memoryengine doctor
 
 Local install:
