@@ -3,6 +3,7 @@ import { ftsRecall, graphRecall, RecallResult, vectorRecall } from "./recall.js"
 import { rrf } from "./fuse.js";
 import { getReranker } from "../providers/rerank.js";
 import { saveTrace } from "../db/traces.js";
+import { normalizeScope } from "../memory/scope.js";
 
 const RECALL_K = 30;
 const RERANK_CANDIDATES = 20;
@@ -14,7 +15,7 @@ export async function retrieve(
   topN = DEFAULT_TOP_N,
 ): Promise<RecallResult[]> {
   const query = typeof input === "string" ? input : input.query;
-  const resolvedScope = typeof input === "string" ? scope : input.scope;
+  const resolvedScope = normalizeScope(typeof input === "string" ? scope : input.scope);
   const resolvedTopN = typeof input === "string" ? topN : input.topN ?? DEFAULT_TOP_N;
   const asOf = typeof input === "string" ? undefined : input.asOf;
   const trimmed = query.trim();

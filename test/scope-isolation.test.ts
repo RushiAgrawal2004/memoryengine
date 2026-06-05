@@ -129,7 +129,7 @@ describe("scope isolation", () => {
     expect(retrieveResults.map((row) => row.content).join("\n")).not.toContain(forbidden);
 
     const shared = await searchMemories({
-      scope,
+      scope: ` ${scope}\r\n`,
       query: "shared retry policy",
       limit: 10,
     });
@@ -155,8 +155,8 @@ describe("scope isolation", () => {
   }
 
   async function assertAuditSurface(): Promise<void> {
-    const alphaAudit = await memoryAudit("project:alpha");
-    const betaAudit = await memoryAudit("project:beta");
+    const alphaAudit = await memoryAudit(" project:alpha\r\n");
+    const betaAudit = await memoryAudit(" project:beta\r\n");
 
     expect(alphaAudit).toMatchObject({
       active: 3,

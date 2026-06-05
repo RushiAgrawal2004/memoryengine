@@ -1,6 +1,7 @@
 import { getSqlClient } from "../db/client.js";
 import { latestFileCommit } from "./git.js";
 import { hashSymbolInFile } from "./symbols.js";
+import { normalizeScope } from "../memory/scope.js";
 
 interface AnchoredMemory {
   id: string;
@@ -26,10 +27,11 @@ export async function flagStaleMemories(
   changedFiles?: string[],
 ): Promise<MemoryAudit> {
   const sql = getSqlClient();
+  const normalizedScope = normalizeScope(scope) ?? scope;
   const memories = await sql<AnchoredMemory[]>`
     select id, attrs, anchors
     from memories
-    where scope = ${scope}
+    where scope = ${normalizedScope}
       and status = 'active'
       and anchors is not null
   `;
@@ -58,7 +60,7 @@ export async function flagStaleMemories(
     }
   }
 
-  return memoryAudit(scope, newlyFlagged);
+  return memoryAudit(normalizedScope, newlyFlagged);
 }
 
 export async function memoryAudit(
@@ -66,6 +68,7 @@ export async function memoryAudit(
   newlyFlagged = 0,
 ): Promise<MemoryAudit> {
   const sql = getSqlClient();
+  const normalizedScope = normalizeScope(scope) ?? scope;
   const [row] = await sql<Array<{
     active: number;
     invalid: number;
@@ -78,7 +81,7 @@ export async function memoryAudit(
         where coalesce((attrs->>'needs_revalidation')::boolean, false)
       )::int as "needsRevalidation"
     from memories
-    where scope = ${scope}
+    where scope = ${normalizedScope}
   `;
 
   return {
