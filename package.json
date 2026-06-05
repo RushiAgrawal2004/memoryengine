@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "mcp": "tsx src/mcp/server.ts",
+    "mcp:inspect": "npx @modelcontextprotocol/inspector --cli node dist/src/index.js --stdio --method tools/list",
     "cli": "tsx src/cli.ts",
     "build": "tsc",
     "test": "vitest",
