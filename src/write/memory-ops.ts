@@ -47,6 +47,10 @@ export interface MemoryOperationDecisionEvent {
   decision: MemoryOperation;
 }
 
+interface IndexedMemoryOperationDecisionEvent extends MemoryOperationDecisionEvent {
+  factIndex: number;
+}
+
 const DEFAULT_SCOPE = "global";
 
 export async function ingestFacts(
@@ -104,7 +108,7 @@ export async function ingestFacts(
   if (pending.length > 0) {
     const batchDecisions = await decideMemoryOpsBatch(pending);
     const byIndex = new Map(batchDecisions.map((decision) => [decision.factIndex, decision]));
-    const rawDecisions: MemoryOperationDecisionEvent[] = [];
+    const rawDecisions: IndexedMemoryOperationDecisionEvent[] = [];
 
     for (const item of pending) {
       const batchDecision = byIndex.get(item.factIndex);
@@ -122,6 +126,7 @@ export async function ingestFacts(
           };
 
       rawDecisions.push({
+        factIndex: item.factIndex,
         fact: item.fact.fact,
         candidates: item.candidates,
         decision,
@@ -130,10 +135,7 @@ export async function ingestFacts(
 
     for (const item of collapseDuplicateInvalidations(rawDecisions)) {
       await recordDecision({ scope, ...item, ctx });
-      const factIndex = pending.find((pendingItem) => pendingItem.fact.fact === item.fact)?.factIndex;
-      if (factIndex !== undefined) {
-        decisionSlots[factIndex] = { ...item.decision, fact: item.fact };
-      }
+      decisionSlots[item.factIndex] = { ...item.decision, fact: item.fact };
     }
   }
 
@@ -358,8 +360,8 @@ async function recordDecision(input: {
 }
 
 function collapseDuplicateInvalidations(
-  events: MemoryOperationDecisionEvent[],
-): MemoryOperationDecisionEvent[] {
+  events: IndexedMemoryOperationDecisionEvent[],
+): IndexedMemoryOperationDecisionEvent[] {
   const lastInvalidationByTarget = new Map<string, number>();
   events.forEach((event, index) => {
     if (event.decision.op === "INVALIDATE" && event.decision.targetId) {

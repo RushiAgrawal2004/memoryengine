@@ -259,6 +259,23 @@ describe("ingestFacts", () => {
     ]);
   });
 
+  it("keeps decisions attached to their original fact index when fact text repeats", async () => {
+    const scope = testScope();
+
+    const operations = await ingestFacts(
+      [
+        { fact: "ADD: repeated fact", temporalRefs: [] },
+        { fact: "ADD: repeated fact", temporalRefs: [] },
+      ],
+      { scope },
+    );
+
+    expect(operations.map((operation) => operation.content)).toEqual([
+      "repeated fact",
+      "repeated fact",
+    ]);
+  });
+
   function testScope(): string {
     const scope = `test:${crypto.randomUUID()}`;
     scopes.push(scope);
