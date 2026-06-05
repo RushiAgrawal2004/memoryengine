@@ -97,6 +97,15 @@ LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
 ```
 
+For Gemini's OpenAI-compatible API, use:
+
+```env
+LLM_PROVIDER=hosted
+LLM_API_KEY=...
+LLM_MODEL=gemini-3-flash-preview
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+```
+
 ## Knowledge Graph
 
 `memory.remember` also extracts entities and relations into the `entities` and `edges` tables. Graph recall traverses non-expired edges up to two hops and feeds those facts into the same RRF fusion as vector and FTS recall.
