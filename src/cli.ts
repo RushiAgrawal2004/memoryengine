@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { closeDb, checkDatabase } from "./db/client.js";
 import { getPgvectorDoctorReport } from "./db/embedding-vectors.js";
+import { assessReadiness, ReadinessCheck } from "./health/readiness.js";
 import { searchMemories } from "./db/memories.js";
 import { config } from "./lib/config.js";
 import { startHttpServer } from "./index.js";
@@ -211,9 +212,16 @@ function parseJsonResponse(value: string): unknown | undefined {
 }
 
 async function runDoctor(): Promise<void> {
+  const strict = args.includes("--strict");
   const db = await checkDatabase();
   const serverRunning = await isHttpServerRunning();
   const pgvector = db ? await getPgvectorDoctorReport() : undefined;
+  const readiness = assessReadiness({
+    databaseOk: db,
+    serverRunning,
+    config,
+    pgvector,
+  });
 
   console.log(`database: ${db ? "ok" : "failed"}`);
   console.log(`server: ${serverRunning ? "running" : "not running"} at http://localhost:${config.port}`);
@@ -222,8 +230,13 @@ async function runDoctor(): Promise<void> {
   console.log(`embeddings local fallback: ${config.embeddingsLocal ? "enabled" : "disabled"}`);
   console.log(`llm provider: ${config.llmProvider}`);
   console.log(`rerank provider: ${config.rerankProvider}`);
+  console.log(`readiness: ${readiness.label}`);
 
   if (!pgvector) {
+    printReadiness(readiness);
+    if (strict && !readiness.ready) {
+      process.exitCode = 1;
+    }
     return;
   }
 
@@ -248,6 +261,11 @@ async function runDoctor(): Promise<void> {
     }
   } else {
     console.log("memory vector recall plan: unavailable until memories.embedding_vector has rows");
+  }
+
+  printReadiness(readiness);
+  if (strict && !readiness.ready) {
+    process.exitCode = 1;
   }
 }
 
@@ -275,6 +293,7 @@ Usage:
   memoryengine connect git
   memoryengine hook-test --scope "project:my-app"
   memoryengine doctor
+  memoryengine doctor --strict
 
 Local install:
   npm run build
@@ -302,6 +321,25 @@ async function git(args: string[], cwd: string): Promise<string> {
     windowsHide: true,
   });
   return stdout;
+}
+
+function printReadiness(report: ReturnType<typeof assessReadiness>): void {
+  console.log("readiness checks:");
+  for (const item of report.checks) {
+    console.log(`- ${readinessIcon(item)} ${item.name}: ${item.message}`);
+  }
+}
+
+function readinessIcon(item: ReadinessCheck): string {
+  if (item.severity === "pass") {
+    return "PASS";
+  }
+
+  if (item.severity === "warn") {
+    return "WARN";
+  }
+
+  return "FAIL";
 }
 
 main()
