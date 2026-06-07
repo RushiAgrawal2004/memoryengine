@@ -167,7 +167,7 @@ Latest LongMemEval oracle local smoke result, first 50 probes:
 | Mode | Dataset | Reportable | Items | Probes | Recall@k | Evidence recall@k | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | context-baseline | longmemeval-oracle-local-50 | yes | 50 | 50 | 66% | 100% | 100% | 30829 chars | 55091 chars | 0ms | 0ms |
-| with-memory | longmemeval-oracle-local-50 | yes | 50 | 50 | 44% | 100% | 100% | 680 chars | 887 chars | 6ms | 17ms |
+| with-memory | longmemeval-oracle-local-50 | yes | 50 | 50 | 52% | 100% | 100% | 1805 chars | 2265 chars | 3ms | 6ms |
 
 This LongMemEval run is useful because it proves the harness can ingest the real
 benchmark shape and dramatically compress context. It is still not a public claim:

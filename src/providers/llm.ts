@@ -462,14 +462,11 @@ export function setLLMForTest(next: LLM | undefined): void {
 function extractFactsPayload(user: string): unknown {
   const text = valueAfter(user, "Episode text:");
   const occurredAt = new Date(valueAfter(user, "Occurred at:"));
-  const sentences = text
-    .split(/(?:[;\n]+|(?<=[a-z0-9_)])\.(?=\s|$))/i)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const sentences = factCandidatesFor(text);
   const facts = sentences.map((fact) => ({
-      fact,
-      temporalRefs: temporalRefsFor(fact, occurredAt),
-    }));
+    fact,
+    temporalRefs: temporalRefsFor(fact, occurredAt),
+  }));
   const entities = new Map<string, { kind: string; name: string }>();
   const relations: Array<{
     srcName: string;
@@ -499,6 +496,78 @@ function extractFactsPayload(user: string): unknown {
   }
 
   return { facts, entities: [...entities.values()], relations };
+}
+
+function factCandidatesFor(text: string): string[] {
+  const chatFacts = factsFromRolePrefixedChat(text);
+  if (chatFacts.length > 0) {
+    return chatFacts;
+  }
+
+  return splitFactSentences(text);
+}
+
+function factsFromRolePrefixedChat(text: string): string[] {
+  const turns = parseRolePrefixedTurns(text);
+  const userTurns = turns.filter((turn) => turn.role === "user");
+  if (userTurns.length === 0) {
+    return [];
+  }
+
+  const sessionId = metadataValue(text, "LongMemEval session_id");
+  const sessionDate = metadataValue(text, "LongMemEval session_date");
+  const prefix = [
+    sessionId ? `session ${sessionId}` : undefined,
+    sessionDate ? `at ${sessionDate}` : undefined,
+  ].filter(Boolean).join(" ");
+
+  return userTurns
+    .map((turn) => compactWhitespace(turn.content))
+    .filter((content) => content.length > 0)
+    .map((content) => prefix ? `${prefix}: user said ${content}` : `user said ${content}`);
+}
+
+function parseRolePrefixedTurns(text: string): Array<{ role: string; content: string }> {
+  const turns: Array<{ role: string; content: string }> = [];
+  let current: { role: string; content: string[] } | undefined;
+
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^(user|assistant|system|tool):\s*(.*)$/i);
+    if (match) {
+      if (current) {
+        turns.push({ role: current.role, content: current.content.join("\n").trim() });
+      }
+      current = { role: match[1].toLowerCase(), content: [match[2] ?? ""] };
+      continue;
+    }
+
+    if (current) {
+      current.content.push(line);
+    }
+  }
+
+  if (current) {
+    turns.push({ role: current.role, content: current.content.join("\n").trim() });
+  }
+
+  return turns;
+}
+
+function splitFactSentences(text: string): string[] {
+  return text
+    .split(/(?:[;\n]+|(?<=[a-z0-9_)])\.(?=\s|$))/i)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function metadataValue(text: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = text.match(new RegExp(`^${escaped}:\\s*(.+)$`, "im"));
+  return match?.[1]?.trim();
+}
+
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function memoryOpPayload(user: string): unknown {

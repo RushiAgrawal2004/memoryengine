@@ -1,6 +1,6 @@
 import * as z from "zod/v4";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HostedLLM } from "../src/providers/llm.js";
+import { HostedLLM, LocalHeuristicLLM } from "../src/providers/llm.js";
 
 const extractionSchema = z.object({
   facts: z.array(z.object({
@@ -142,6 +142,31 @@ describe("HostedLLM", () => {
 
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(output.facts[0]?.fact).toBe("Quota retry succeeded");
+  });
+});
+
+describe("LocalHeuristicLLM", () => {
+  it("extracts role-prefixed chat memories from user turns without assistant boilerplate", async () => {
+    const output = await new LocalHeuristicLLM().json(
+      "Extract atomic facts",
+      [
+        "Occurred at: 2026-06-07T00:00:00.000Z",
+        "Episode text:",
+        "LongMemEval session_id: session-1",
+        "LongMemEval session_date: 2026/06/07 (Sun) 10:00",
+        "user: I switched the project package manager to pnpm after npm caused lockfile drift.",
+        "assistant: Here are ten generic steps you can follow when choosing a package manager.",
+        "1. Read documentation.",
+        "2. Compare tools.",
+        "user: The dashboard should keep trace logs visible for debugging memory decisions.",
+      ].join("\n"),
+      extractionSchema,
+    );
+
+    expect(output.facts.map((fact) => fact.fact)).toEqual([
+      "session session-1 at 2026/06/07 (Sun) 10:00: user said I switched the project package manager to pnpm after npm caused lockfile drift.",
+      "session session-1 at 2026/06/07 (Sun) 10:00: user said The dashboard should keep trace logs visible for debugging memory decisions.",
+    ]);
   });
 });
 
