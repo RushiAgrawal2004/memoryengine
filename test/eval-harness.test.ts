@@ -6,6 +6,7 @@ import { closeDb } from "../src/db/client.js";
 import {
   createEvalReport,
   formatResultsTable,
+  loadLongMemEvalDatasets,
   loadLoCoMoDatasets,
   runEval,
   writeEvalOutputs,
@@ -90,6 +91,47 @@ describe("eval harness", () => {
     expect(output.markdown).toContain("| context-baseline | sample | no |");
     expect(json.dataset).toBe("sample");
     expect(await readFile(output.markdownPath, "utf8")).toContain("Recall@k");
+  });
+
+  it("loads LongMemEval-format datasets with evidence session ids", async () => {
+    const datasetDir = await makeTempDir("memoryengine-longmemeval-");
+
+    await writeFile(
+      path.join(datasetDir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: "q1",
+          question_type: "knowledge-update",
+          question: "Which package manager does the project use now?",
+          answer: "pnpm",
+          question_date: "2026/06/01 (Mon) 10:00",
+          haystack_session_ids: ["s-old", "s-new"],
+          haystack_dates: ["2026/05/01 (Fri) 09:00", "2026/05/20 (Wed) 11:00"],
+          haystack_sessions: [
+            [{ role: "user", content: "The project used npm originally." }],
+            [{ role: "user", content: "We moved the project package manager to pnpm.", has_answer: true }],
+          ],
+          answer_session_ids: ["s-new"],
+        },
+      ]),
+    );
+
+    const items = await loadLongMemEvalDatasets(datasetDir);
+    const results = await runEval({
+      items,
+      datasetName: "longmemeval-fixture",
+      modes: ["context-baseline"],
+      scratchPrefix: `test-longmemeval:${crypto.randomUUID()}`,
+      minReportableProbes: 50,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).toBe("q1");
+    expect(items[0]?.sessions.join("\n")).toContain("LongMemEval session_id: s-new");
+    expect(items[0]?.probes[0]?.expectedAnswer).toBe("pnpm");
+    expect(items[0]?.probes[0]?.expectedEvidenceIds).toEqual(["s-new"]);
+    expect(results[0]?.evidenceRecallAtK).toBe(1);
+    expect(formatResultsTable(results)).toContain("Evidence recall@k");
   });
 
   it("requires at least 50 probes for reportable runs", async () => {

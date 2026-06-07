@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
 import { getSqlClient, closeDb } from "../src/db/client.js";
@@ -12,6 +12,8 @@ export interface BenchmarkProbe {
   question: string;
   expectedKeywords: string[];
   expectedAnswer?: string;
+  expectedEvidenceIds?: string[];
+  questionType?: string;
   k?: number;
 }
 
@@ -30,6 +32,7 @@ export interface EvalOptions {
   requireHostedJudge?: boolean;
   requireReportable?: boolean;
   minReportableProbes?: number;
+  limit?: number;
 }
 
 export interface EvalModeResult {
@@ -39,6 +42,7 @@ export interface EvalModeResult {
   items: number;
   probes: number;
   recallAtK: number;
+  evidenceRecallAtK: number | null;
   answerAccuracy: number;
   p50ContextChars: number;
   p95ContextChars: number;
@@ -67,9 +71,15 @@ export interface EvalOutput {
 
 interface ProbeResult {
   recalled: boolean;
+  evidenceRecalled: boolean | null;
   correct: boolean;
   contextChars: number;
   latencyMs: number;
+}
+
+interface ProbeContext {
+  context: string;
+  memoryIds: string[];
 }
 
 const DEFAULT_K = 5;
@@ -192,7 +202,7 @@ export const codingBenchmark: BenchmarkItem[] = [
 ];
 
 export async function runEval(options: EvalOptions = {}): Promise<EvalModeResult[]> {
-  const items = options.items ?? codingBenchmark;
+  const items = (options.items ?? codingBenchmark).slice(0, options.limit);
   const modes = options.modes ?? ["context-baseline", "with-memory"];
   const scratchPrefix = options.scratchPrefix ?? `eval:${Date.now()}`;
   const dataset = options.datasetName ?? "coding-smoke";
@@ -241,21 +251,26 @@ export async function runEval(options: EvalOptions = {}): Promise<EvalModeResult
 export async function loadLoCoMoDatasets(
   datasetDir = DEFAULT_DATASET_DIR,
 ): Promise<BenchmarkItem[]> {
-  const entries = await readdir(datasetDir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  });
-  const files = entries
-    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json"))
-    .map((entry) => path.join(datasetDir, entry.name))
-    .sort();
+  const files = await jsonFilesIn(datasetDir, (name) => !name.toLowerCase().startsWith("longmemeval"));
   const items: BenchmarkItem[] = [];
 
   for (const file of files) {
     const raw = JSON.parse(await readFile(file, "utf8")) as unknown;
     items.push(...normalizeDatasetItems(raw, path.basename(file, ".json")));
+  }
+
+  return items;
+}
+
+export async function loadLongMemEvalDatasets(
+  inputPath = DEFAULT_DATASET_DIR,
+): Promise<BenchmarkItem[]> {
+  const files = await jsonFilesIn(inputPath, (name) => name.toLowerCase().startsWith("longmemeval"));
+  const items: BenchmarkItem[] = [];
+
+  for (const file of files) {
+    const raw = JSON.parse(await readFile(file, "utf8")) as unknown;
+    items.push(...normalizeLongMemEvalItems(raw, path.basename(file, ".json")));
   }
 
   return items;
@@ -303,13 +318,13 @@ export async function writeEvalOutputs(
 
 export function formatResultsTable(results: EvalModeResult[]): string {
   const lines = [
-    "| Mode | Dataset | Reportable | Items | Probes | Recall@k | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |",
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Mode | Dataset | Reportable | Items | Probes | Recall@k | Evidence recall@k | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   ];
 
   for (const result of results) {
     lines.push(
-      `| ${result.mode} | ${result.dataset} | ${result.reportable ? "yes" : "no"} | ${result.items} | ${result.probes} | ${percent(result.recallAtK)} | ${percent(result.answerAccuracy)} | ${result.p50ContextChars} chars | ${result.p95ContextChars} chars | ${Math.round(result.p50LatencyMs)}ms | ${Math.round(result.p95LatencyMs)}ms |`,
+      `| ${result.mode} | ${result.dataset} | ${result.reportable ? "yes" : "no"} | ${result.items} | ${result.probes} | ${percent(result.recallAtK)} | ${nullablePercent(result.evidenceRecallAtK)} | ${percent(result.answerAccuracy)} | ${result.p50ContextChars} chars | ${result.p95ContextChars} chars | ${Math.round(result.p50LatencyMs)}ms | ${Math.round(result.p95LatencyMs)}ms |`,
     );
   }
 
@@ -324,9 +339,15 @@ async function runProbe(
   options: EvalOptions,
 ): Promise<ProbeResult> {
   const started = performance.now();
-  const context = await contextForProbe(scope, item, probe, mode, options);
+  const probeContext = await contextForProbe(scope, item, probe, mode, options);
   const latencyMs = performance.now() - started;
+  const context = probeContext.context;
   const recalled = containsAllKeywords(context, probe.expectedKeywords);
+  const evidenceHit = await evidenceRecalled(
+    context,
+    probe.expectedEvidenceIds,
+    probeContext.memoryIds,
+  );
   const judgment = await judgeAnswer(
     probe.question,
     context,
@@ -336,6 +357,7 @@ async function runProbe(
 
   return {
     recalled,
+    evidenceRecalled: evidenceHit,
     correct: judgment.correct,
     contextChars: context.length,
     latencyMs,
@@ -348,17 +370,23 @@ async function contextForProbe(
   probe: BenchmarkProbe,
   mode: EvalMode,
   options: EvalOptions,
-): Promise<string> {
+): Promise<ProbeContext> {
   if (mode === "empty-baseline") {
-    return "";
+    return { context: "", memoryIds: [] };
   }
 
   if (mode === "context-baseline") {
-    return recentHistoryContext(item.sessions, options.contextWindowSessions);
+    return {
+      context: recentHistoryContext(item.sessions, options.contextWindowSessions),
+      memoryIds: [],
+    };
   }
 
   const docs = await retrieve({ query: probe.question, scope, topN: probe.k ?? DEFAULT_K });
-  return docs.map((doc) => doc.content).join("\n");
+  return {
+    context: docs.map((doc) => doc.content).join("\n"),
+    memoryIds: docs.map((doc) => doc.id),
+  };
 }
 
 async function judgeAnswer(
@@ -394,6 +422,11 @@ function summarizeMode(
 ): EvalModeResult {
   const probes = probeResults.length;
   const recalled = probeResults.filter((result) => result.recalled).length;
+  const evidenceResults = probeResults.filter(
+    (result): result is ProbeResult & { evidenceRecalled: boolean } =>
+      result.evidenceRecalled !== null,
+  );
+  const evidenceRecalledCount = evidenceResults.filter((result) => result.evidenceRecalled).length;
   const correct = probeResults.filter((result) => result.correct).length;
   const latencies = probeResults.map((result) => result.latencyMs);
   const contextSizes = probeResults.map((result) => result.contextChars);
@@ -405,12 +438,84 @@ function summarizeMode(
     items,
     probes,
     recallAtK: probes === 0 ? 0 : recalled / probes,
+    evidenceRecallAtK: evidenceResults.length === 0
+      ? null
+      : evidenceRecalledCount / evidenceResults.length,
     answerAccuracy: probes === 0 ? 0 : correct / probes,
     p50ContextChars: Math.round(percentile(contextSizes, 0.5)),
     p95ContextChars: Math.round(percentile(contextSizes, 0.95)),
     p50LatencyMs: percentile(latencies, 0.5),
     p95LatencyMs: percentile(latencies, 0.95),
   };
+}
+
+function normalizeLongMemEvalItems(raw: unknown, datasetName: string): BenchmarkItem[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`LongMemEval dataset ${datasetName} must be a JSON array.`);
+  }
+
+  return raw.map((record, index) => normalizeLongMemEvalItem(record, `${datasetName}-${index + 1}`));
+}
+
+function normalizeLongMemEvalItem(raw: unknown, fallbackId: string): BenchmarkItem {
+  if (!raw || typeof raw !== "object") {
+    throw new Error(`LongMemEval item ${fallbackId} must be an object.`);
+  }
+
+  const record = raw as Record<string, unknown>;
+  const id = stringValue(record, "question_id") ?? fallbackId;
+  const sessionIds = arrayValue(record.haystack_session_ids).map(String);
+  const dates = arrayValue(record.haystack_dates).map(String);
+  const sessionRows = arrayValue(record.haystack_sessions);
+  const sessions = sessionRows
+    .map((session, index) => formatLongMemEvalSession({
+      id: sessionIds[index] ?? `${id}:session:${index + 1}`,
+      date: dates[index],
+      session,
+    }))
+    .filter(Boolean);
+  const question = stringValue(record, "question");
+  const answer = answerToString(record.answer);
+  const evidenceIds = arrayValue(record.answer_session_ids).map(String);
+
+  if (!question) {
+    throw new Error(`LongMemEval item ${id} has no question.`);
+  }
+  if (sessions.length === 0) {
+    throw new Error(`LongMemEval item ${id} has no haystack sessions.`);
+  }
+
+  return {
+    id,
+    sessions,
+    probes: [
+      {
+        question,
+        expectedKeywords: answer ? keywordsFromAnswer(answer) : [],
+        ...(answer ? { expectedAnswer: answer } : {}),
+        ...(evidenceIds.length > 0 ? { expectedEvidenceIds: evidenceIds } : {}),
+        ...(stringValue(record, "question_type") ? { questionType: stringValue(record, "question_type") } : {}),
+      },
+    ],
+  };
+}
+
+function formatLongMemEvalSession(input: {
+  id: string;
+  date?: string;
+  session: unknown;
+}): string {
+  const turns = Array.isArray(input.session)
+    ? formatMessages(input.session)
+    : typeof input.session === "string"
+      ? input.session
+      : "";
+
+  return [
+    `LongMemEval session_id: ${input.id}`,
+    input.date ? `LongMemEval session_date: ${input.date}` : undefined,
+    turns,
+  ].filter(Boolean).join("\n");
 }
 
 function normalizeDatasetItems(raw: unknown, datasetName: string): BenchmarkItem[] {
@@ -423,6 +528,36 @@ function normalizeDatasetItems(raw: unknown, datasetName: string): BenchmarkItem
   }
 
   return records.map((record, index) => normalizeDatasetItem(record, `${datasetName}-${index + 1}`));
+}
+
+async function jsonFilesIn(
+  inputPath: string,
+  predicate: (name: string) => boolean = () => true,
+): Promise<string[]> {
+  const stats = await stat(inputPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  });
+  if (!stats) {
+    return [];
+  }
+
+  if (stats.isFile()) {
+    const name = path.basename(inputPath);
+    return name.toLowerCase().endsWith(".json") ? [inputPath] : [];
+  }
+
+  const entries = await readdir(inputPath, { withFileTypes: true });
+  return entries
+    .filter((entry) =>
+      entry.isFile()
+      && entry.name.toLowerCase().endsWith(".json")
+      && predicate(entry.name)
+    )
+    .map((entry) => path.join(inputPath, entry.name))
+    .sort();
 }
 
 function normalizeDatasetItem(raw: unknown, fallbackId: string): BenchmarkItem {
@@ -562,6 +697,28 @@ function stringArrayValue(raw: unknown, ...keys: string[]): string[] | undefined
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function answerToString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const answer = value.map((item) => String(item)).join("; ").trim();
+    return answer || undefined;
+  }
+
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  const answer = String(value).trim();
+  return answer || undefined;
+}
+
 function numberValue(raw: unknown, ...keys: string[]): number | undefined {
   const value = objectValue(raw, ...keys);
   return typeof value === "number" ? value : undefined;
@@ -584,6 +741,45 @@ function containsAllKeywords(value: string, keywords: string[]): boolean {
   return keywords.every((keyword) => lower.includes(keyword.toLowerCase()));
 }
 
+async function evidenceRecalled(
+  value: string,
+  evidenceIds: string[] | undefined,
+  memoryIds: string[],
+): Promise<boolean | null> {
+  if (!evidenceIds || evidenceIds.length === 0) {
+    return null;
+  }
+
+  const lower = value.toLowerCase();
+  if (evidenceIds.some((id) => lower.includes(id.toLowerCase()))) {
+    return true;
+  }
+
+  if (memoryIds.length === 0) {
+    return false;
+  }
+
+  const sourceTexts = await sourceEpisodeTextsForMemories(memoryIds);
+  const sourceText = sourceTexts.join("\n").toLowerCase();
+  return evidenceIds.some((id) => sourceText.includes(id.toLowerCase()));
+}
+
+async function sourceEpisodeTextsForMemories(memoryIds: string[]): Promise<string[]> {
+  if (memoryIds.length === 0) {
+    return [];
+  }
+
+  const sql = getSqlClient();
+  const rows = await sql<Array<{ content: string }>>`
+    select episodes.content
+    from memories
+    join episodes on episodes.id = memories.source_episode
+    where memories.id in ${sql(memoryIds)}
+  `;
+
+  return rows.map((row) => row.content);
+}
+
 function percentile(values: number[], p: number): number {
   if (values.length === 0) {
     return 0;
@@ -598,19 +794,28 @@ function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function nullablePercent(value: number | null): string {
+  return value === null ? "n/a" : percent(value);
+}
+
 if (process.argv[1]?.endsWith("harness.ts") || process.argv[1]?.endsWith("harness.js")) {
   const args = process.argv.slice(2);
+  const datasetKind = valueAfter(args, "--dataset") ?? "auto";
+  const datasetFile = valueAfter(args, "--file");
   const datasetDir = valueAfter(args, "--datasets") ?? DEFAULT_DATASET_DIR;
   const resultsDir = valueAfter(args, "--results") ?? DEFAULT_RESULTS_DIR;
-  const datasetName = valueAfter(args, "--dataset-name") ?? "locomo";
+  const datasetName = valueAfter(args, "--dataset-name") ?? datasetKind;
+  const limit = numberAfter(args, "--limit");
+  const allowLocal = args.includes("--allow-local");
 
-  loadLoCoMoDatasets(datasetDir)
+  loadDatasetForCli(datasetKind, datasetFile ?? datasetDir)
     .then((items) => items.length > 0 ? items : codingBenchmark)
     .then((items) => runEval({
       items,
       datasetName: items === codingBenchmark ? "coding-smoke" : datasetName,
-      requireHostedJudge: items !== codingBenchmark,
+      requireHostedJudge: items !== codingBenchmark && !allowLocal,
       requireReportable: items !== codingBenchmark,
+      limit,
     }))
     .then(async (results) => {
       const report = createEvalReport(results, { dataset: results[0]?.dataset });
@@ -631,4 +836,27 @@ if (process.argv[1]?.endsWith("harness.ts") || process.argv[1]?.endsWith("harnes
 function valueAfter(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   return index === -1 ? undefined : args[index + 1];
+}
+
+function numberAfter(args: string[], flag: string): number | undefined {
+  const value = valueAfter(args, flag);
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+async function loadDatasetForCli(kind: string, inputPath: string): Promise<BenchmarkItem[]> {
+  if (kind === "longmemeval") {
+    return loadLongMemEvalDatasets(inputPath);
+  }
+
+  if (kind === "locomo") {
+    return loadLoCoMoDatasets(inputPath);
+  }
+
+  const longMemEval = await loadLongMemEvalDatasets(inputPath);
+  return longMemEval.length > 0 ? longMemEval : loadLoCoMoDatasets(inputPath);
 }

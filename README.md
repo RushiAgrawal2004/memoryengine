@@ -142,6 +142,17 @@ Run the local coding-memory benchmark:
 npm run eval
 ```
 
+Run a LongMemEval oracle smoke benchmark after downloading the public dataset into
+`eval/datasets/longmemeval_oracle.json`:
+
+```sh
+npm run eval -- --dataset longmemeval --file eval/datasets/longmemeval_oracle.json --dataset-name longmemeval-oracle-local-50 --limit 50 --allow-local
+```
+
+`--allow-local` is intentionally explicit: it lets the harness run with local
+heuristic providers for development. Remove it and configure hosted LLM/embedding
+providers before treating the result as a serious product benchmark.
+
 Current local smoke result compares memory retrieval against a fair no-store baseline that receives the same session history as raw context:
 
 | Mode | Items | Probes | Recall/coverage | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |
@@ -150,6 +161,18 @@ Current local smoke result compares memory retrieval against a fair no-store bas
 | with-memory | 8 | 8 | 100% | 100% | 109 chars | 148 chars | 2ms | 11ms |
 
 This table proves the eval harness and memory plumbing work with a fairer baseline; it is not a public product benchmark yet. A credible benchmark still needs larger datasets such as LoCoMo or LongMemEval and real hosted model validation.
+
+Latest LongMemEval oracle local smoke result, first 50 probes:
+
+| Mode | Dataset | Reportable | Items | Probes | Recall@k | Evidence recall@k | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| context-baseline | longmemeval-oracle-local-50 | yes | 50 | 50 | 66% | 100% | 100% | 30829 chars | 55091 chars | 0ms | 0ms |
+| with-memory | longmemeval-oracle-local-50 | yes | 50 | 50 | 44% | 100% | 100% | 680 chars | 887 chars | 6ms | 17ms |
+
+This LongMemEval run is useful because it proves the harness can ingest the real
+benchmark shape and dramatically compress context. It is still not a public claim:
+the run used deterministic local embeddings and the local heuristic judge, not real
+semantic embeddings or a hosted QA judge.
 
 Start the daemon and open `http://localhost:3777/viewer` to inspect Memories, Entities, Edges, and Episodes.
 
