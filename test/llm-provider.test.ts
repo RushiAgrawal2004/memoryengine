@@ -9,6 +9,18 @@ const extractionSchema = z.object({
       text: z.string(),
       resolvedDate: z.string(),
     })).default([]),
+    sourceSessionId: z.string().optional(),
+    speaker: z.string().optional(),
+    observationText: z.string().optional(),
+    sessionDate: z.string().optional(),
+    mentionedDate: z.string().optional(),
+    observationType: z.enum([
+      "user_fact",
+      "preference",
+      "update",
+      "temporal_event",
+      "assistant_durable_info",
+    ]).optional(),
   })),
   entities: z.array(z.object({
     kind: z.string(),
@@ -164,9 +176,15 @@ describe("LocalHeuristicLLM", () => {
     );
 
     expect(output.facts.map((fact) => fact.fact)).toEqual([
-      "session session-1 at 2026/06/07 (Sun) 10:00: user said I switched the project package manager to pnpm after npm caused lockfile drift",
-      "session session-1 at 2026/06/07 (Sun) 10:00: user said the dashboard should keep trace logs visible for debugging memory decisions",
+      "I switched the project package manager to pnpm after npm caused lockfile drift",
+      "the dashboard should keep trace logs visible for debugging memory decisions",
     ]);
+    expect(output.facts[0]).toMatchObject({
+      sourceSessionId: "session-1",
+      speaker: "user",
+      sessionDate: "2026/06/07 (Sun) 10:00",
+      observationType: "update",
+    });
   });
 });
 

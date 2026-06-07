@@ -51,6 +51,10 @@ interface IndexedMemoryOperationDecisionEvent extends MemoryOperationDecisionEve
   factIndex: number;
 }
 
+interface DecisionWithMetadata extends AppliedMemoryOperation {
+  extractedFact: ExtractedFact;
+}
+
 const DEFAULT_SCOPE = "global";
 
 export async function ingestFacts(
@@ -65,7 +69,7 @@ export async function ingestFacts(
     commit: repoRef?.commit,
   });
   const limitedFacts = facts.slice(0, config.maxOpsPerRemember);
-  const decisionSlots: Array<AppliedMemoryOperation | undefined> = [];
+  const decisionSlots: Array<DecisionWithMetadata | undefined> = [];
   const pending: Array<{
     factIndex: number;
     fact: ExtractedFact;
@@ -98,7 +102,7 @@ export async function ingestFacts(
         rationale: localNoop.rationale,
       };
       await recordDecision({ scope, fact: fact.fact, candidates, decision, ctx });
-      decisionSlots[factIndex] = { ...decision, fact: fact.fact };
+      decisionSlots[factIndex] = { ...decision, fact: fact.fact, extractedFact: fact };
       continue;
     }
 
@@ -135,11 +139,15 @@ export async function ingestFacts(
 
     for (const item of collapseDuplicateInvalidations(rawDecisions)) {
       await recordDecision({ scope, ...item, ctx });
-      decisionSlots[item.factIndex] = { ...item.decision, fact: item.fact };
+      decisionSlots[item.factIndex] = {
+        ...item.decision,
+        fact: item.fact,
+        extractedFact: limitedFacts[item.factIndex] ?? { fact: item.fact, temporalRefs: [] },
+      };
     }
   }
 
-  const decisions = decisionSlots.filter((decision): decision is AppliedMemoryOperation =>
+  const decisions = decisionSlots.filter((decision): decision is DecisionWithMetadata =>
     Boolean(decision),
   );
 
@@ -167,12 +175,13 @@ export async function ingestFacts(
               and status = 'active'
           `;
         }
-        results.push({ ...decision, memoryId: decision.targetId });
+        results.push(publicOperation(decision, decision.targetId));
         continue;
       }
 
       const embedding = embeddings[embeddingIndex];
       embeddingIndex += 1;
+      const attrs = attrsForExtractedFact(decision.extractedFact);
 
       if (decision.op === "ADD") {
         const [row] = await tx<Array<{ id: string }>>`
@@ -184,7 +193,8 @@ export async function ingestFacts(
             source_episode,
             source_session,
             repo_ref,
-            anchors
+            anchors,
+            attrs
           )
           values (
             'semantic',
@@ -194,11 +204,12 @@ export async function ingestFacts(
             ${ctx.sourceEpisode ?? null},
             ${ctx.sourceSession ?? null},
             ${repoRef ? tx.json(repoRef as never) : null},
-            ${anchors.length > 0 ? tx.json(anchors as never) : null}
+            ${anchors.length > 0 ? tx.json(anchors as never) : null},
+            ${attrs ? tx.json(attrs as never) : null}
           )
           returning id
         `;
-        results.push({ ...decision, memoryId: row.id });
+        results.push(publicOperation(decision, row.id));
         continue;
       }
 
@@ -214,6 +225,7 @@ export async function ingestFacts(
             embedding = ${tx.json(embedding)},
             repo_ref = ${repoRef ? tx.json(repoRef as never) : null},
             anchors = ${anchors.length > 0 ? tx.json(anchors as never) : null},
+            attrs = coalesce(attrs, '{}'::jsonb) || ${attrs ? tx.json(attrs as never) : tx.json({} as never)}::jsonb,
             source_session = coalesce(${ctx.sourceSession ?? null}, source_session),
             confidence = least(confidence + 0.1, 1.0),
             last_used_at = now()
@@ -221,7 +233,7 @@ export async function ingestFacts(
             and scope = ${scope}
             and status = 'active'
         `;
-        results.push({ ...decision, memoryId: decision.targetId });
+        results.push(publicOperation(decision, decision.targetId));
         continue;
       }
 
@@ -247,6 +259,7 @@ export async function ingestFacts(
             source_session,
             repo_ref,
           anchors,
+          attrs,
           supersedes
         )
         values (
@@ -258,11 +271,12 @@ export async function ingestFacts(
           ${ctx.sourceSession ?? null},
           ${repoRef ? tx.json(repoRef as never) : null},
           ${anchors.length > 0 ? tx.json(anchors as never) : null},
+          ${attrs ? tx.json(attrs as never) : null},
           ${decision.targetId}
         )
         returning id
       `;
-      results.push({ ...decision, memoryId: row.id });
+      results.push(publicOperation(decision, row.id));
     }
 
     return results;
@@ -294,6 +308,34 @@ export async function ingestFacts(
   }
 
   return applied;
+}
+
+function publicOperation(
+  decision: DecisionWithMetadata,
+  memoryId: string | undefined,
+): AppliedMemoryOperation {
+  const { extractedFact: _extractedFact, ...operation } = decision;
+  return { ...operation, memoryId };
+}
+
+function attrsForExtractedFact(fact: ExtractedFact): Record<string, unknown> | undefined {
+  const observation = {
+    sourceSessionId: fact.sourceSessionId,
+    speaker: fact.speaker,
+    observationText: fact.observationText ?? fact.fact,
+    sessionDate: fact.sessionDate,
+    mentionedDate: fact.mentionedDate,
+    observationType: fact.observationType,
+  };
+  const compactObservation = Object.fromEntries(
+    Object.entries(observation).filter((entry) => entry[1] !== undefined),
+  );
+
+  if (Object.keys(compactObservation).length === 0) {
+    return undefined;
+  }
+
+  return { observation: compactObservation };
 }
 
 async function decideMemoryOpsBatch(

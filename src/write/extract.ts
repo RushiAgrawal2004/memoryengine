@@ -9,6 +9,18 @@ export const temporalReferenceSchema = z.object({
 export const extractedFactSchema = z.object({
   fact: z.string().min(1),
   temporalRefs: z.array(temporalReferenceSchema).default([]),
+  sourceSessionId: z.string().optional(),
+  speaker: z.string().optional(),
+  observationText: z.string().optional(),
+  sessionDate: z.string().optional(),
+  mentionedDate: z.string().optional(),
+  observationType: z.enum([
+    "user_fact",
+    "preference",
+    "update",
+    "temporal_event",
+    "assistant_durable_info",
+  ]).optional(),
 });
 
 export const extractedEntitySchema = z.object({
@@ -42,7 +54,14 @@ export async function extractEpisode(
   occurredAt = new Date(),
 ): Promise<ExtractedEpisode> {
   return getLLM().json(
-    "Extract atomic, self-contained facts from a coding-agent memory episode. Resolve temporal references relative to the occurred_at timestamp.",
+    [
+      "Extract durable, atomic observations from a coding-agent memory episode.",
+      "For role-prefixed chat, preserve sourceSessionId when present, speaker, observationText, sessionDate, mentionedDate, and observationType.",
+      "Use observationType user_fact, preference, update, temporal_event, or assistant_durable_info.",
+      "Ignore generic assistant advice, boilerplate, and step-by-step suggestions unless the user explicitly asked to remember it.",
+      "Do not use LongMemEval answer labels, answer_session_ids, or has_answer markers to decide what is production memory.",
+      "Resolve temporal references relative to the occurred_at timestamp.",
+    ].join(" "),
     `Occurred at: ${occurredAt.toISOString()}\nEpisode text: ${episodeText}`,
     extractionSchema,
   );

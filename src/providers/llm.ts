@@ -466,10 +466,16 @@ export function setLLMForTest(next: LLM | undefined): void {
 function extractFactsPayload(user: string): unknown {
   const text = valueAfter(user, "Episode text:");
   const occurredAt = new Date(valueAfter(user, "Occurred at:"));
-  const sentences = factCandidatesFor(text);
-  const facts = sentences.map((fact) => ({
-    fact,
-    temporalRefs: temporalRefsFor(fact, occurredAt),
+  const observations = observationCandidatesFor(text, occurredAt);
+  const facts = observations.map((observation) => ({
+    fact: observation.observationText,
+    temporalRefs: observation.temporalRefs,
+    sourceSessionId: observation.sourceSessionId,
+    speaker: observation.speaker,
+    observationText: observation.observationText,
+    sessionDate: observation.sessionDate,
+    mentionedDate: observation.mentionedDate,
+    observationType: observation.observationType,
   }));
   const entities = new Map<string, { kind: string; name: string }>();
   const relations: Array<{
@@ -481,8 +487,8 @@ function extractFactsPayload(user: string): unknown {
     fact: string;
   }> = [];
 
-  for (const sentence of sentences) {
-    const relation = relationFor(sentence);
+  for (const observation of observations) {
+    const relation = relationFor(observation.observationText);
     if (!relation) {
       continue;
     }
@@ -502,34 +508,68 @@ function extractFactsPayload(user: string): unknown {
   return { facts, entities: [...entities.values()], relations };
 }
 
-function factCandidatesFor(text: string): string[] {
-  const chatFacts = factsFromRolePrefixedChat(text);
-  if (chatFacts.length > 0) {
-    return chatFacts;
-  }
-
-  return splitFactSentences(text);
+interface LocalObservation {
+  sourceSessionId?: string;
+  speaker?: string;
+  observationText: string;
+  sessionDate?: string;
+  mentionedDate?: string;
+  observationType?: "user_fact" | "preference" | "update" | "temporal_event" | "assistant_durable_info";
+  temporalRefs: Array<{ text: string; resolvedDate: string }>;
 }
 
-function factsFromRolePrefixedChat(text: string): string[] {
+function observationCandidatesFor(text: string, occurredAt: Date): LocalObservation[] {
+  if (hasRolePrefixedTurns(text)) {
+    return observationsFromRolePrefixedChat(text, occurredAt);
+  }
+
+  return splitFactSentences(text).map((observationText) =>
+    enrichObservation({ observationText }, occurredAt)
+  );
+}
+
+function hasRolePrefixedTurns(text: string): boolean {
+  return /^(?:user|assistant|system|tool):\s*/im.test(text);
+}
+
+function observationsFromRolePrefixedChat(text: string, occurredAt: Date): LocalObservation[] {
   const turns = parseRolePrefixedTurns(text);
-  const userTurns = turns.filter((turn) => turn.role === "user");
-  if (userTurns.length === 0) {
+  if (turns.length === 0) {
     return [];
   }
 
-  const sessionId = metadataValue(text, "LongMemEval session_id");
-  const sessionDate = metadataValue(text, "LongMemEval session_date");
-  const prefix = [
-    sessionId ? `session ${sessionId}` : undefined,
-    sessionDate ? `at ${sessionDate}` : undefined,
-  ].filter(Boolean).join(" ");
+  const sourceSessionId = metadataValue(text, "LongMemEval session_id")
+    ?? metadataValue(text, "session_id")
+    ?? metadataValue(text, "Session id");
+  const sessionDate = metadataValue(text, "LongMemEval session_date")
+    ?? metadataValue(text, "session_date")
+    ?? metadataValue(text, "Session date");
 
-  return userTurns
-    .map((turn) => compactWhitespace(turn.content))
-    .filter((content) => content.length > 0)
-    .flatMap((content) => splitRoleMemoryClauses(content))
-    .map((content) => prefix ? `${prefix}: user said ${content}` : `user said ${content}`);
+  return turns.flatMap((turn) => {
+    const content = compactWhitespace(stripEvalLabels(turn.content));
+    if (!content) {
+      return [];
+    }
+
+    if (turn.role === "assistant" && !isExplicitAssistantDurable(content)) {
+      return [];
+    }
+
+    if (!["user", "assistant"].includes(turn.role)) {
+      return [];
+    }
+
+    return splitRoleMemoryClauses(content, turn.role)
+      .map((observationText) =>
+        enrichObservation({
+          sourceSessionId,
+          speaker: turn.role,
+          observationText,
+          sessionDate,
+          observationType: turn.role === "assistant" ? "assistant_durable_info" : undefined,
+        }, occurredAt)
+      );
+  });
 }
 
 function parseRolePrefixedTurns(text: string): Array<{ role: string; content: string }> {
@@ -565,22 +605,34 @@ function splitFactSentences(text: string): string[] {
     .filter(Boolean);
 }
 
-function splitRoleMemoryClauses(text: string): string[] {
+function splitRoleMemoryClauses(text: string, role: string): string[] {
+  if (role === "assistant" && isExplicitAssistantDurable(text)) {
+    const durable = compactWhitespace(text.replace(
+      /^(?:remember this|please remember|note this|durable note|memory note|save this)\s*:?\s*/i,
+      "",
+    ));
+    return durable.length >= 12 ? [durable] : [];
+  }
+
   const marked = text.replace(
-    /\b(By the way|Also|Actually|I remember|I recently|I just|Speaking of)\b/g,
+    /\b(By the way|Also|Actually|I remember|I recently|I just|Speaking of|Remember this|Please remember|Note this)\b/g,
     "\n$1",
   );
 
   const chunks = marked
     .split(/\n+|(?<=[a-z0-9_)])\.(?=\s|$)/i)
     .map((item) => compactWhitespace(item))
-    .map((item) => item.replace(/^(?:by the way|also|actually),?\s+/i, ""))
-    .filter((item) => item.length >= 12 && isDurableRoleClause(item));
+    .map((item) => item.replace(/^(?:by the way|also|actually|remember this|please remember|note this),?\s+/i, ""))
+    .filter((item) => item.length >= 12 && isDurableRoleClause(item, role));
 
-  return chunks.length > 0 ? chunks : [text];
+  return chunks;
 }
 
-function isDurableRoleClause(text: string): boolean {
+function isDurableRoleClause(text: string, role: string): boolean {
+  if (role === "assistant") {
+    return isExplicitAssistantDurable(text);
+  }
+
   if (/^(?:can|could|would|do|does|did|will|should)\s+you\b/i.test(text)) {
     return false;
   }
@@ -590,6 +642,49 @@ function isDurableRoleClause(text: string): boolean {
   }
 
   return true;
+}
+
+function enrichObservation(
+  input: Omit<LocalObservation, "temporalRefs" | "mentionedDate">,
+  occurredAt: Date,
+): LocalObservation {
+  const temporalRefs = temporalRefsFor(input.observationText, occurredAt);
+  const mentionedDate = temporalRefs[0]?.resolvedDate;
+  return {
+    ...input,
+    observationType: input.observationType ?? observationTypeFor(input.observationText),
+    mentionedDate,
+    temporalRefs,
+  };
+}
+
+function observationTypeFor(text: string): LocalObservation["observationType"] {
+  if (/\b(?:prefer|preference|like to|want you to|please always|don't want|do not want)\b/i.test(text)) {
+    return "preference";
+  }
+
+  if (/\b(?:actually|switched|moved|changed|now use|now uses|no longer|instead|replaced|migrated)\b/i.test(text)) {
+    return "update";
+  }
+
+  if (/\b(?:yesterday|today|tomorrow|last week|last month|recently|\d+\s+weeks?\s+ago)\b/i.test(text)) {
+    return "temporal_event";
+  }
+
+  return "user_fact";
+}
+
+function isExplicitAssistantDurable(text: string): boolean {
+  return /^(?:remember this|please remember|note this|durable note|memory note|save this)\s*:?\s*/i
+    .test(text);
+}
+
+function stripEvalLabels(text: string): string {
+  return text
+    .replace(/\bhas_answer\s*:\s*(?:true|false)\b/gi, "")
+    .replace(/\banswer_session_ids?\s*:\s*\[[^\]]*]/gi, "")
+    .replace(/\banswer\s*:\s*["'][^"']*["']/gi, "")
+    .trim();
 }
 
 function metadataValue(text: string, key: string): string | undefined {
@@ -834,6 +929,10 @@ function temporalRefsFor(text: string, occurredAt: Date): Array<{ text: string; 
 
   if (lower.includes("yesterday")) {
     refs.push({ text: "yesterday", resolvedDate: daysAgo(occurredAt, 1) });
+  }
+
+  if (lower.includes("last week")) {
+    refs.push({ text: "last week", resolvedDate: daysAgo(occurredAt, 7) });
   }
 
   const weeksAgo = lower.match(/\b(\d+|one|two|three|four)\s+weeks?\s+ago\b/);
