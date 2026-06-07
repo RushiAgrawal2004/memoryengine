@@ -158,14 +158,14 @@ describe("LocalHeuristicLLM", () => {
         "assistant: Here are ten generic steps you can follow when choosing a package manager.",
         "1. Read documentation.",
         "2. Compare tools.",
-        "user: The dashboard should keep trace logs visible for debugging memory decisions.",
+        "user: Can you help with the dashboard? By the way, the dashboard should keep trace logs visible for debugging memory decisions.",
       ].join("\n"),
       extractionSchema,
     );
 
     expect(output.facts.map((fact) => fact.fact)).toEqual([
-      "session session-1 at 2026/06/07 (Sun) 10:00: user said I switched the project package manager to pnpm after npm caused lockfile drift.",
-      "session session-1 at 2026/06/07 (Sun) 10:00: user said The dashboard should keep trace logs visible for debugging memory decisions.",
+      "session session-1 at 2026/06/07 (Sun) 10:00: user said I switched the project package manager to pnpm after npm caused lockfile drift",
+      "session session-1 at 2026/06/07 (Sun) 10:00: user said the dashboard should keep trace logs visible for debugging memory decisions",
     ]);
   });
 });

@@ -167,7 +167,11 @@ Latest LongMemEval oracle local smoke result, first 50 probes:
 | Mode | Dataset | Reportable | Items | Probes | Recall@k | Evidence recall@k | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | context-baseline | longmemeval-oracle-local-50 | yes | 50 | 50 | 66% | 100% | 100% | 30829 chars | 55091 chars | 0ms | 0ms |
-| with-memory | longmemeval-oracle-local-50 | yes | 50 | 50 | 52% | 100% | 100% | 1805 chars | 2265 chars | 3ms | 6ms |
+| with-memory | longmemeval-oracle-local-50 | yes | 50 | 50 | 50% | 100% | 100% | 930 chars | 1146 chars | 5ms | 14ms |
+
+With `k=10` for the same local memory run, recall rises to 54% with p50/p95 context
+of 1693/2053 chars. That is the better quality setting for multi-evidence
+LongMemEval questions, while the default top-5 setting is more aggressively compact.
 
 This LongMemEval run is useful because it proves the harness can ingest the real
 benchmark shape and dramatically compress context. It is still not a public claim:

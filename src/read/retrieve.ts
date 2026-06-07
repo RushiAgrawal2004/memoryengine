@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { ftsRecall, graphRecall, RecallResult, vectorRecall } from "./recall.js";
+import { ftsRecall, graphRecall, keywordRecall, RecallResult, vectorRecall } from "./recall.js";
 import { rrf } from "./fuse.js";
 import { getReranker } from "../providers/rerank.js";
 import { saveTrace } from "../db/traces.js";
@@ -24,13 +24,14 @@ export async function retrieve(
   }
   const started = performance.now();
 
-  const [vectorResults, ftsResults, graphResults] = await Promise.all([
+  const [vectorResults, ftsResults, keywordResults, graphResults] = await Promise.all([
     vectorRecall(trimmed, resolvedScope, RECALL_K, asOf),
     ftsRecall(trimmed, resolvedScope, RECALL_K, asOf),
+    keywordRecall(trimmed, resolvedScope, RECALL_K, asOf),
     graphRecall(trimmed, resolvedScope, RECALL_K, asOf),
   ]);
 
-  const fusedRanked = rrf([vectorResults, ftsResults, graphResults]);
+  const fusedRanked = rrf([vectorResults, ftsResults, keywordResults, graphResults]);
   const fused = fusedRanked
     .slice(0, RERANK_CANDIDATES)
     .map((result) => result.item);
@@ -42,6 +43,7 @@ export async function retrieve(
       started,
       vectorResults,
       ftsResults,
+      keywordResults,
       graphResults,
       rrfResults: fusedRanked,
       reranked: [],
@@ -57,12 +59,13 @@ export async function retrieve(
     resolvedTopN,
   );
 
-  const finalResults = reranked
+  const rerankedResults = reranked
     .map((result) => {
       const item = fused[result.index];
       return item ? { ...item, rank: result.score } : undefined;
     })
     .filter((item): item is RecallResult => Boolean(item));
+  const finalResults = diversifyResults(rerankedResults, resolvedTopN);
 
   await saveRetrieveTrace({
     query: trimmed,
@@ -70,6 +73,7 @@ export async function retrieve(
     started,
     vectorResults,
     ftsResults,
+    keywordResults,
     graphResults,
     rrfResults: fusedRanked,
     reranked,
@@ -86,6 +90,7 @@ interface RetrieveTraceInput {
   started: number;
   vectorResults: RecallResult[];
   ftsResults: RecallResult[];
+  keywordResults: RecallResult[];
   graphResults: RecallResult[];
   rrfResults: Array<{ item: RecallResult; score: number }>;
   reranked: Array<{ index: number; score: number }>;
@@ -106,6 +111,7 @@ async function saveRetrieveTrace(input: RetrieveTraceInput): Promise<void> {
       sources: {
         vector: traceHits(input.vectorResults),
         fts: traceHits(input.ftsResults),
+        keyword: traceHits(input.keywordResults),
         graph: traceHits(input.graphResults),
       },
       postRrf: input.rrfResults.map((result, index) => ({
@@ -136,4 +142,38 @@ function traceHits(results: RecallResult[]): Array<{
     score: result.rank,
     content: result.content,
   }));
+}
+
+function diversifyResults(results: RecallResult[], topN: number): RecallResult[] {
+  const selected: RecallResult[] = [];
+  const deferred: RecallResult[] = [];
+  const seenSources = new Set<string>();
+
+  for (const result of results) {
+    const source = sourceKey(result);
+    if (!source || !seenSources.has(source)) {
+      selected.push(result);
+      if (source) {
+        seenSources.add(source);
+      }
+    } else {
+      deferred.push(result);
+    }
+
+    if (selected.length === topN) {
+      return selected;
+    }
+  }
+
+  return [...selected, ...deferred].slice(0, topN);
+}
+
+function sourceKey(result: RecallResult): string | undefined {
+  const longMemEvalSession = result.content.match(/^session\s+([^:\s]+)\b/i)?.[1];
+  if (longMemEvalSession) {
+    return longMemEvalSession.toLowerCase();
+  }
+
+  const genericSession = result.content.match(/\bsession[_\s-]?id:\s*([a-z0-9_.-]+)/i)?.[1];
+  return genericSession?.toLowerCase();
 }

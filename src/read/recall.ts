@@ -270,6 +270,84 @@ export async function ftsRecall(
       `;
 }
 
+export async function keywordRecall(
+  query: string,
+  scope: string | undefined,
+  k: number,
+  asOf?: Date,
+): Promise<RecallResult[]> {
+  const sql = getSqlClient();
+  const rows = asOf
+    ? scope
+      ? await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where scope = ${scope}
+            and (t_valid is null or t_valid <= ${asOf})
+            and (t_invalid is null or t_invalid > ${asOf})
+          order by created_at desc
+          limit 1000
+        `
+      : await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where (t_valid is null or t_valid <= ${asOf})
+            and (t_invalid is null or t_invalid > ${asOf})
+          order by created_at desc
+          limit 1000
+        `
+    : scope
+      ? await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where status = 'active'
+            and scope = ${scope}
+          order by created_at desc
+          limit 1000
+        `
+      : await sql<RecallResult[]>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt"
+          from memories
+          where status = 'active'
+          order by created_at desc
+          limit 1000
+        `;
+  const queryTokens = meaningfulTokens(query);
+
+  return rows
+    .map((row) => ({
+      ...row,
+      rank: tokenOverlapScore(queryTokens, meaningfulTokens(row.content)),
+    }))
+    .filter((row) => row.rank > 0)
+    .sort((a, b) => b.rank - a.rank || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, k);
+}
+
 export async function graphRecall(
   query: string,
   scope: string | undefined,
@@ -361,4 +439,64 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
 
   return dot / (Math.sqrt(aMagnitude) * Math.sqrt(bMagnitude));
+}
+
+function tokenOverlapScore(queryTokens: string[], contentTokens: string[]): number {
+  if (queryTokens.length === 0 || contentTokens.length === 0) {
+    return 0;
+  }
+
+  const contentSet = new Set(contentTokens);
+  const shared = new Set(queryTokens.filter((token) => contentSet.has(token)));
+  return shared.size / queryTokens.length;
+}
+
+function meaningfulTokens(value: string): string[] {
+  const stopwords = new Set([
+    "a",
+    "about",
+    "after",
+    "an",
+    "and",
+    "are",
+    "as",
+    "be",
+    "by",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "my",
+    "of",
+    "on",
+    "or",
+    "the",
+    "this",
+    "to",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+  ]);
+
+  return [...new Set(
+    value
+      .toLowerCase()
+      .match(/[a-z0-9_.-]+/g)
+      ?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? [],
+  )];
 }

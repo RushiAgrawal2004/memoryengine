@@ -524,6 +524,7 @@ function factsFromRolePrefixedChat(text: string): string[] {
   return userTurns
     .map((turn) => compactWhitespace(turn.content))
     .filter((content) => content.length > 0)
+    .flatMap((content) => splitRoleMemoryClauses(content))
     .map((content) => prefix ? `${prefix}: user said ${content}` : `user said ${content}`);
 }
 
@@ -558,6 +559,33 @@ function splitFactSentences(text: string): string[] {
     .split(/(?:[;\n]+|(?<=[a-z0-9_)])\.(?=\s|$))/i)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function splitRoleMemoryClauses(text: string): string[] {
+  const marked = text.replace(
+    /\b(By the way|Also|Actually|I remember|I recently|I just|Speaking of)\b/g,
+    "\n$1",
+  );
+
+  const chunks = marked
+    .split(/\n+|(?<=[a-z0-9_)])\.(?=\s|$)/i)
+    .map((item) => compactWhitespace(item))
+    .map((item) => item.replace(/^(?:by the way|also|actually),?\s+/i, ""))
+    .filter((item) => item.length >= 12 && isDurableRoleClause(item));
+
+  return chunks.length > 0 ? chunks : [text];
+}
+
+function isDurableRoleClause(text: string): boolean {
+  if (/^(?:can|could|would|do|does|did|will|should)\s+you\b/i.test(text)) {
+    return false;
+  }
+
+  if (/\?$/u.test(text) && !/\b(?:i|we|my|our|project|repo|team|recently|remember|switched|use|uses|used)\b/i.test(text)) {
+    return false;
+  }
+
+  return true;
 }
 
 function metadataValue(text: string, key: string): string | undefined {
