@@ -153,6 +153,18 @@ npm run eval -- --dataset longmemeval --file eval/datasets/longmemeval_oracle.js
 heuristic providers for development. Remove it and configure hosted LLM/embedding
 providers before treating the result as a serious product benchmark.
 
+Generate LongMemEval-style hypotheses for the official evaluator:
+
+```sh
+npx tsx eval/longmemeval-official.ts --file eval/datasets/longmemeval_s_cleaned.json --split-name longmemeval_s --out eval/results/longmemeval-official/local-smoke --limit 10 --allow-local
+```
+
+This writes `hypotheses.jsonl` with `{ question_id, hypothesis }` lines plus
+`debug.json` with retrieved memory IDs, context size, latency, hypothesis, and gold
+answer. Runs with `--allow-local` are development smoke runs, not official scores.
+For a real score, remove `--allow-local`, configure hosted providers, then pass the
+JSONL file to LongMemEval's `evaluate_qa.py`.
+
 Current local smoke result compares memory retrieval against a fair no-store baseline that receives the same session history as raw context:
 
 | Mode | Items | Probes | Recall/coverage | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |

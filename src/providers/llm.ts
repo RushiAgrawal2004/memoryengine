@@ -440,6 +440,10 @@ export class LocalHeuristicLLM implements LLM {
       return summarizeEpisodes(user);
     }
 
+    if (system.toLowerCase().includes("answer a long-term memory question")) {
+      return answerFromEvidence(user);
+    }
+
     return user;
   }
 }
@@ -715,6 +719,24 @@ function summarizeEpisodes(user: string): string {
     .slice(0, 3)
     .map(([key, cluster]) => `${key} appears across ${cluster.length} recent episodes`)
     .join("\n");
+}
+
+function answerFromEvidence(user: string): string {
+  const evidence = valueAfter(user, "Evidence:");
+  const lines = evidence
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\[\d+\]\s*/, "").trim())
+    .filter((line) => line && line !== "(none)");
+
+  if (lines.length === 0) {
+    return "I don't know.";
+  }
+
+  return stripSessionPrefix(lines[0]);
+}
+
+function stripSessionPrefix(value: string): string {
+  return value.replace(/^session\s+[^:]+:\s+user said\s+/i, "").trim();
 }
 
 function relationFor(sentence: string):
