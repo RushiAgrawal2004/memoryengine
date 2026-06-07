@@ -142,6 +142,51 @@ Run the local coding-memory benchmark:
 npm run eval
 ```
 
+Check eval readiness before LongMemEval runs:
+
+```sh
+memoryengine doctor --eval
+memoryengine doctor --eval --smoke
+```
+
+`memoryengine doctor --eval` verifies the database, pgvector/vector columns, hosted
+provider configuration, and reranker status without making paid provider calls.
+Add `--smoke` only when you want one real hosted embedding call and one real hosted
+LLM JSON call.
+
+Local development evals can run without paid APIs, but they are smoke tests only:
+
+```env
+DATABASE_URL=postgres://memory_engine:memory_engine@localhost:5432/memory_engine
+EMBEDDINGS_PROVIDER=local
+EMBEDDINGS_LOCAL=1
+LLM_PROVIDER=local
+RERANK_PROVIDER=none
+```
+
+Official-style LongMemEval runs should use real providers and pgvector:
+
+```env
+DATABASE_URL=postgres://...
+EMBEDDINGS_PROVIDER=hosted
+EMBEDDINGS_API_KEY=real-key
+EMBEDDINGS_MODEL=text-embedding-3-small
+EMBEDDINGS_BASE_URL=https://api.openai.com/v1
+LLM_PROVIDER=hosted
+LLM_API_KEY=real-key
+LLM_MODEL=gpt-4o-mini
+LLM_BASE_URL=https://api.openai.com/v1
+RERANK_PROVIDER=cohere
+COHERE_API_KEY=real-key
+RERANK_MODEL=rerank-v3.5
+```
+
+If you want to run official-style evals without reranking, make that explicit:
+
+```env
+RERANK_PROVIDER=none
+```
+
 Run a LongMemEval oracle smoke benchmark after downloading the public dataset into
 `eval/datasets/longmemeval_oracle.json`:
 

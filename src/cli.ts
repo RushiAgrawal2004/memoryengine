@@ -5,11 +5,20 @@ import { chmod, copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import * as z from "zod/v4";
 import { closeDb, checkDatabase } from "./db/client.js";
 import { getPgvectorDoctorReport } from "./db/embedding-vectors.js";
+import {
+  assessEvalReadiness,
+  formatEvalReadiness,
+  isPlaceholderSecret,
+  SmokeCheckResult,
+} from "./health/eval-readiness.js";
 import { assessReadiness, ReadinessCheck } from "./health/readiness.js";
 import { searchMemories } from "./db/memories.js";
 import { config } from "./lib/config.js";
+import { HostedEmbeddings } from "./providers/embeddings.js";
+import { HostedLLM } from "./providers/llm.js";
 import { startHttpServer } from "./index.js";
 import { activateMemory } from "./memory/activate.js";
 import { remember } from "./write/remember.js";
@@ -212,6 +221,11 @@ function parseJsonResponse(value: string): unknown | undefined {
 }
 
 async function runDoctor(): Promise<void> {
+  if (args.includes("--eval")) {
+    await runEvalDoctor();
+    return;
+  }
+
   const strict = args.includes("--strict");
   const db = await checkDatabase();
   const serverRunning = await isHttpServerRunning();
@@ -269,6 +283,150 @@ async function runDoctor(): Promise<void> {
   }
 }
 
+async function runEvalDoctor(): Promise<void> {
+  const strict = args.includes("--strict");
+  const smokeRequested = args.includes("--smoke");
+  const db = await checkDatabase();
+  const pgvector = db ? await getPgvectorDoctorReport() : undefined;
+  const smokeChecks = smokeRequested ? await runEvalSmokeChecks() : undefined;
+  const report = assessEvalReadiness({
+    databaseOk: db,
+    config,
+    pgvector,
+    rerankerExplicitlyDisabled: process.env.RERANK_PROVIDER === "none",
+    smokeRequested,
+    smokeChecks,
+  });
+
+  console.log("LongMemEval official-readiness doctor");
+  console.log(`database: ${db ? "ok" : "failed"}`);
+  console.log(`embeddings provider: ${config.embeddingsProvider}`);
+  console.log(`embeddings model: ${config.embeddingsModel}`);
+  console.log(`embeddings base url: ${config.embeddingsBaseUrl}`);
+  console.log(`llm provider: ${config.llmProvider}`);
+  console.log(`llm model: ${config.llmModel}`);
+  console.log(`llm base url: ${config.llmBaseUrl}`);
+  console.log(`rerank provider: ${config.rerankProvider}`);
+  console.log(`paid smoke calls: ${smokeRequested ? "enabled" : "skipped"}`);
+
+  if (pgvector) {
+    console.log(`pgvector extension: ${pgvector.extensionInstalled ? "present" : "missing"}`);
+    console.log("vector columns:");
+    for (const table of pgvector.tables) {
+      console.log(
+        `- ${table.table}: column=${table.vectorColumn ? "yes" : "no"}, `
+        + `hnsw=${table.hnswIndex ? "yes" : "no"}, `
+        + `vectorized=${table.vectorEmbeddings}/${table.totalRows}`,
+      );
+    }
+  }
+
+  for (const line of formatEvalReadiness(report)) {
+    console.log(line);
+  }
+
+  if (strict && !report.ready) {
+    process.exitCode = 1;
+  }
+}
+
+async function runEvalSmokeChecks(): Promise<SmokeCheckResult[]> {
+  return [
+    await smokeHostedEmbeddings(),
+    await smokeHostedLLM(),
+  ];
+}
+
+async function smokeHostedEmbeddings(): Promise<SmokeCheckResult> {
+  if (config.embeddingsProvider !== "hosted") {
+    return {
+      name: "hosted embedding smoke",
+      severity: "fail",
+      message: "EMBEDDINGS_PROVIDER is not hosted.",
+    };
+  }
+
+  if (isPlaceholderSecret(config.embeddingsApiKey)) {
+    return {
+      name: "hosted embedding smoke",
+      severity: "fail",
+      message: "EMBEDDINGS_API_KEY is missing or placeholder-like.",
+    };
+  }
+
+  try {
+    const embeddings = new HostedEmbeddings(
+      config.embeddingsApiKey,
+      config.embeddingsModel,
+      config.embeddingsBaseUrl,
+      { maxRetries: 0, timeoutMs: 10000 },
+    );
+    const [vector] = await embeddings.embed(["memory engine LongMemEval smoke test"]);
+    return {
+      name: "hosted embedding smoke",
+      severity: Array.isArray(vector) && vector.length > 0 ? "pass" : "fail",
+      message: Array.isArray(vector) && vector.length > 0
+        ? `Hosted embeddings smoke returned ${vector.length} dimensions.`
+        : "Hosted embeddings smoke returned no vector.",
+    };
+  } catch (error) {
+    return {
+      name: "hosted embedding smoke",
+      severity: "fail",
+      message: `Hosted embeddings smoke failed: ${errorMessage(error)}`,
+    };
+  }
+}
+
+async function smokeHostedLLM(): Promise<SmokeCheckResult> {
+  if (config.llmProvider !== "hosted") {
+    return {
+      name: "hosted llm json smoke",
+      severity: "fail",
+      message: "LLM_PROVIDER is not hosted.",
+    };
+  }
+
+  if (isPlaceholderSecret(config.llmApiKey)) {
+    return {
+      name: "hosted llm json smoke",
+      severity: "fail",
+      message: "LLM_API_KEY is missing or placeholder-like.",
+    };
+  }
+
+  try {
+    const llm = new HostedLLM(
+      config.llmApiKey,
+      config.llmModel,
+      config.llmBaseUrl,
+      { maxRetries: 0, timeoutMs: 10000 },
+    );
+    const result = await llm.json(
+      "Return only JSON matching the schema.",
+      "Return {\"ok\":true} to prove JSON mode works.",
+      z.object({ ok: z.boolean() }),
+    );
+    return {
+      name: "hosted llm json smoke",
+      severity: result.ok ? "pass" : "fail",
+      message: result.ok
+        ? "Hosted LLM JSON smoke returned ok=true."
+        : "Hosted LLM JSON smoke returned ok=false.",
+    };
+  } catch (error) {
+    return {
+      name: "hosted llm json smoke",
+      severity: "fail",
+      message: `Hosted LLM JSON smoke failed: ${errorMessage(error)}`,
+    };
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function isHttpServerRunning(): Promise<boolean> {
   try {
     const response = await fetch(`http://localhost:${config.port}/health`, {
@@ -293,6 +451,8 @@ Usage:
   memoryengine connect git
   memoryengine hook-test --scope "project:my-app"
   memoryengine doctor
+  memoryengine doctor --eval
+  memoryengine doctor --eval --smoke
   memoryengine doctor --strict
 
 Local install:
