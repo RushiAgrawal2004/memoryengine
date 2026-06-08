@@ -20,7 +20,8 @@
     "scenario:todo": "tsx src/scripts/todo-codex-scenario.ts",
     "eval": "tsx eval/harness.ts",
     "consolidate:once": "tsx src/consolidate/loop.ts --once",
-    "consolidate:loop": "tsx src/consolidate/loop.ts"
+    "consolidate:loop": "tsx src/consolidate/loop.ts",
+    "start": "node dist/src/index.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.4",
