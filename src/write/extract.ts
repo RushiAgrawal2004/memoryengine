@@ -3,7 +3,13 @@ import { getLLM } from "../providers/llm.js";
 
 export const temporalReferenceSchema = z.object({
   text: z.string(),
-  resolvedDate: z.string(),
+  kind: z.string().optional(),
+  resolvedDate: z.string().optional(),
+  direction: z.enum(["before", "after"]).optional(),
+  eventText: z.string().optional(),
+  amount: z.number().optional(),
+  unit: z.string().optional(),
+  days: z.number().optional(),
 });
 
 export const extractedFactSchema = z.object({
@@ -14,6 +20,8 @@ export const extractedFactSchema = z.object({
   observationText: z.string().optional(),
   sessionDate: z.string().optional(),
   mentionedDate: z.string().optional(),
+  eventDate: z.string().optional(),
+  mentionedAt: z.string().optional(),
   observationType: z.enum([
     "user_fact",
     "preference",
@@ -56,8 +64,10 @@ export async function extractEpisode(
   return getLLM().json(
     [
       "Extract durable, atomic observations from a coding-agent memory episode.",
-      "For role-prefixed chat, preserve sourceSessionId when present, speaker, observationText, sessionDate, mentionedDate, and observationType.",
+      "For role-prefixed chat, preserve sourceSessionId when present, speaker, observationText, sessionDate, mentionedDate, eventDate, mentionedAt, temporalRefs, and observationType.",
       "Use observationType user_fact, preference, update, temporal_event, or assistant_durable_info.",
+      "Normalize explicit dates and relative dates into ISO eventDate where possible, using occurred_at as the reference time.",
+      "Keep before/after event phrases and duration candidates in temporalRefs even when they do not resolve to a date.",
       "Ignore generic assistant advice, boilerplate, and step-by-step suggestions unless the user explicitly asked to remember it.",
       "Do not use LongMemEval answer labels, answer_session_ids, or has_answer markers to decide what is production memory.",
       "Resolve temporal references relative to the occurred_at timestamp.",

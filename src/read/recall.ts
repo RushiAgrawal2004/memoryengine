@@ -348,6 +348,122 @@ export async function keywordRecall(
     .slice(0, k);
 }
 
+export async function temporalRecall(
+  query: string,
+  scope: string | undefined,
+  k: number,
+  asOf?: Date,
+): Promise<RecallResult[]> {
+  if (!isTemporalQuery(query)) {
+    return [];
+  }
+
+  const sql = getSqlClient();
+  const rows = asOf
+    ? scope
+      ? await sql<Array<RecallResult & { eventDate: string | null; temporalRefs: unknown }>>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt",
+            attrs->'observation'->>'eventDate' as "eventDate",
+            attrs->'observation'->'temporalRefs' as "temporalRefs"
+          from memories
+          where scope = ${scope}
+            and (attrs->'observation'->>'eventDate' is not null
+              or attrs->'observation'->'temporalRefs' is not null)
+            and (t_valid is null or t_valid <= ${asOf})
+            and (t_invalid is null or t_invalid > ${asOf})
+          order by created_at desc
+          limit 1000
+        `
+      : await sql<Array<RecallResult & { eventDate: string | null; temporalRefs: unknown }>>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt",
+            attrs->'observation'->>'eventDate' as "eventDate",
+            attrs->'observation'->'temporalRefs' as "temporalRefs"
+          from memories
+          where (attrs->'observation'->>'eventDate' is not null
+              or attrs->'observation'->'temporalRefs' is not null)
+            and (t_valid is null or t_valid <= ${asOf})
+            and (t_invalid is null or t_invalid > ${asOf})
+          order by created_at desc
+          limit 1000
+        `
+    : scope
+      ? await sql<Array<RecallResult & { eventDate: string | null; temporalRefs: unknown }>>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt",
+            attrs->'observation'->>'eventDate' as "eventDate",
+            attrs->'observation'->'temporalRefs' as "temporalRefs"
+          from memories
+          where status = 'active'
+            and scope = ${scope}
+            and (attrs->'observation'->>'eventDate' is not null
+              or attrs->'observation'->'temporalRefs' is not null)
+          order by created_at desc
+          limit 1000
+        `
+      : await sql<Array<RecallResult & { eventDate: string | null; temporalRefs: unknown }>>`
+          select
+            id,
+            type,
+            scope,
+            content,
+            0::real as rank,
+            created_at::text as "createdAt",
+            attrs->'observation'->>'eventDate' as "eventDate",
+            attrs->'observation'->'temporalRefs' as "temporalRefs"
+          from memories
+          where status = 'active'
+            and (attrs->'observation'->>'eventDate' is not null
+              or attrs->'observation'->'temporalRefs' is not null)
+          order by created_at desc
+          limit 1000
+        `;
+
+  const queryTokens = meaningfulTokens(query);
+  const latest = /\b(?:latest|newest|recent|current|now)\b/i.test(query);
+  const between = /\bbetween\b|\bhow many days\b|\bdays between\b/i.test(query);
+
+  return rows
+    .map((row) => {
+      const lexical = tokenOverlapScore(queryTokens, meaningfulTokens(row.content));
+      const dateScore = row.eventDate ? normalizedDateScore(row.eventDate) : 0.2;
+      const temporalDensity = Array.isArray(row.temporalRefs) ? Math.min(row.temporalRefs.length, 5) / 10 : 0;
+      const rank = between
+        ? 0.55 + lexical * 0.35 + temporalDensity
+        : latest
+          ? 0.65 + dateScore * 0.3 + lexical * 0.2
+          : 0.45 + lexical * 0.4 + dateScore * 0.15 + temporalDensity;
+
+      return {
+        id: row.id,
+        type: row.type,
+        scope: row.scope,
+        content: row.content,
+        rank,
+        createdAt: row.createdAt,
+      };
+    })
+    .filter((row) => row.rank > 0.45)
+    .sort((a, b) => b.rank - a.rank || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, k);
+}
+
 export async function graphRecall(
   query: string,
   scope: string | undefined,
@@ -416,6 +532,20 @@ export async function graphRecall(
     order by edge_id, depth asc
     limit ${k}
   `;
+}
+
+function isTemporalQuery(query: string): boolean {
+  return /\b(?:after|ago|before|between|current|date|days?|duration|latest|last|newest|recent|today|tomorrow|week|when|yesterday)\b/i
+    .test(query);
+}
+
+function normalizedDateScore(value: string): number {
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, time / Date.now()));
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {

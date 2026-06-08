@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { config } from "../lib/config.js";
+import { normalizeTemporalText } from "../time/normalize.js";
 
 export interface LLM {
   json<T>(system: string, user: string, schema: z.ZodType<T>): Promise<T>;
@@ -475,6 +476,8 @@ function extractFactsPayload(user: string): unknown {
     observationText: observation.observationText,
     sessionDate: observation.sessionDate,
     mentionedDate: observation.mentionedDate,
+    eventDate: observation.eventDate,
+    mentionedAt: observation.mentionedAt,
     observationType: observation.observationType,
   }));
   const entities = new Map<string, { kind: string; name: string }>();
@@ -514,8 +517,19 @@ interface LocalObservation {
   observationText: string;
   sessionDate?: string;
   mentionedDate?: string;
+  eventDate?: string;
+  mentionedAt?: string;
   observationType?: "user_fact" | "preference" | "update" | "temporal_event" | "assistant_durable_info";
-  temporalRefs: Array<{ text: string; resolvedDate: string }>;
+  temporalRefs: Array<{
+    text: string;
+    kind?: string;
+    resolvedDate?: string;
+    direction?: "before" | "after";
+    eventText?: string;
+    amount?: number;
+    unit?: string;
+    days?: number;
+  }>;
 }
 
 function observationCandidatesFor(text: string, occurredAt: Date): LocalObservation[] {
@@ -648,13 +662,14 @@ function enrichObservation(
   input: Omit<LocalObservation, "temporalRefs" | "mentionedDate">,
   occurredAt: Date,
 ): LocalObservation {
-  const temporalRefs = temporalRefsFor(input.observationText, occurredAt);
-  const mentionedDate = temporalRefs[0]?.resolvedDate;
+  const temporal = normalizeTemporalText(input.observationText, occurredAt);
   return {
     ...input,
     observationType: input.observationType ?? observationTypeFor(input.observationText),
-    mentionedDate,
-    temporalRefs,
+    mentionedDate: temporal.eventDate,
+    eventDate: temporal.eventDate,
+    mentionedAt: temporal.mentionedAt,
+    temporalRefs: temporal.temporalRefs,
   };
 }
 

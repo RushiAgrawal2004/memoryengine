@@ -1,5 +1,12 @@
 import { performance } from "node:perf_hooks";
-import { ftsRecall, graphRecall, keywordRecall, RecallResult, vectorRecall } from "./recall.js";
+import {
+  ftsRecall,
+  graphRecall,
+  keywordRecall,
+  RecallResult,
+  temporalRecall,
+  vectorRecall,
+} from "./recall.js";
 import { rrf } from "./fuse.js";
 import { getReranker } from "../providers/rerank.js";
 import { saveTrace } from "../db/traces.js";
@@ -24,14 +31,15 @@ export async function retrieve(
   }
   const started = performance.now();
 
-  const [vectorResults, ftsResults, keywordResults, graphResults] = await Promise.all([
+  const [vectorResults, ftsResults, keywordResults, graphResults, temporalResults] = await Promise.all([
     vectorRecall(trimmed, resolvedScope, RECALL_K, asOf),
     ftsRecall(trimmed, resolvedScope, RECALL_K, asOf),
     keywordRecall(trimmed, resolvedScope, RECALL_K, asOf),
     graphRecall(trimmed, resolvedScope, RECALL_K, asOf),
+    temporalRecall(trimmed, resolvedScope, RECALL_K, asOf),
   ]);
 
-  const fusedRanked = rrf([vectorResults, ftsResults, keywordResults, graphResults]);
+  const fusedRanked = rrf([vectorResults, ftsResults, keywordResults, graphResults, temporalResults]);
   const fused = fusedRanked
     .slice(0, RERANK_CANDIDATES)
     .map((result) => result.item);
@@ -45,6 +53,7 @@ export async function retrieve(
       ftsResults,
       keywordResults,
       graphResults,
+      temporalResults,
       rrfResults: fusedRanked,
       reranked: [],
       fused,
@@ -75,6 +84,7 @@ export async function retrieve(
     ftsResults,
     keywordResults,
     graphResults,
+    temporalResults,
     rrfResults: fusedRanked,
     reranked,
     fused,
@@ -92,6 +102,7 @@ interface RetrieveTraceInput {
   ftsResults: RecallResult[];
   keywordResults: RecallResult[];
   graphResults: RecallResult[];
+  temporalResults: RecallResult[];
   rrfResults: Array<{ item: RecallResult; score: number }>;
   reranked: Array<{ index: number; score: number }>;
   fused: RecallResult[];
@@ -113,6 +124,7 @@ async function saveRetrieveTrace(input: RetrieveTraceInput): Promise<void> {
         fts: traceHits(input.ftsResults),
         keyword: traceHits(input.keywordResults),
         graph: traceHits(input.graphResults),
+        temporal: traceHits(input.temporalResults),
       },
       postRrf: input.rrfResults.map((result, index) => ({
         rank: index + 1,

@@ -325,6 +325,9 @@ function attrsForExtractedFact(fact: ExtractedFact): Record<string, unknown> | u
     observationText: fact.observationText ?? fact.fact,
     sessionDate: fact.sessionDate,
     mentionedDate: fact.mentionedDate,
+    eventDate: fact.eventDate,
+    mentionedAt: fact.mentionedAt,
+    temporalRefs: fact.temporalRefs.length > 0 ? fact.temporalRefs : undefined,
     observationType: fact.observationType,
   };
   const compactObservation = Object.fromEntries(
