@@ -1,5 +1,6 @@
 import { getSqlClient } from "../db/client.js";
 import { normalizeScope } from "../memory/scope.js";
+import { answerQuestion } from "./answer.js";
 import { RecallResult, temporalRecall } from "./recall.js";
 import { retrieve } from "./retrieve.js";
 
@@ -20,6 +21,7 @@ export interface QuestionPlan {
 export interface RetrieveEvidenceOptions {
   topN?: number;
   asOf?: Date;
+  composeAnswer?: boolean;
 }
 
 interface MemoryEvidenceRow extends RecallResult {
@@ -121,7 +123,31 @@ export async function retrieveEvidence(
   evidence.push(...await expandBySourceSession(detailed, resolvedScope, options.asOf));
   evidence.push(...await expandBySharedEntitiesAndEvents(trimmed, evidence, resolvedScope, options.asOf));
 
-  return diversifyEvidence(await detailsForEvidence(evidence), targetK);
+  const diversified = diversifyEvidence(await detailsForEvidence(evidence), targetK);
+  if (options.composeAnswer === false || diversified.length === 0) {
+    return diversified;
+  }
+
+  const composed = await answerQuestion({
+    question: trimmed,
+    evidence: diversified.map((item) => item.content),
+    asOf: options.asOf,
+  });
+  if (isAbstention(composed) || evidenceAlreadyContainsAnswer(diversified, composed)) {
+    return diversified;
+  }
+
+  return [
+    {
+      id: `derived-answer:${hashText(`${trimmed}\n${composed}`)}`,
+      type: "derived_answer",
+      scope: resolvedScope ?? "global",
+      content: `Derived answer from retrieved evidence: ${composed}`,
+      rank: 1,
+      createdAt: new Date().toISOString(),
+    },
+    ...diversified,
+  ];
 }
 
 function decomposeQuestion(query: string, kind: QuestionKind): string[] {
@@ -384,6 +410,29 @@ function sourceKey(row: MemoryEvidenceRow): string | undefined {
   return row.sourceSessionId?.toLowerCase()
     ?? row.sourceSession?.toLowerCase()
     ?? row.content.match(/^session\s+([^:\s]+)\b/i)?.[1]?.toLowerCase();
+}
+
+function isAbstention(value: string): boolean {
+  return /\b(?:i don't know|unknown|insufficient|not enough)\b/i.test(value.trim());
+}
+
+function evidenceAlreadyContainsAnswer(evidence: RecallResult[], answer: string): boolean {
+  const answerTokens = importantTokens(answer);
+  if (answerTokens.length === 0) {
+    return true;
+  }
+
+  const text = evidence.map((item) => item.content).join("\n").toLowerCase();
+  return answerTokens.every((token) => text.includes(token));
+}
+
+function hashText(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 function sharedTokenScore(queryTokens: string[], contentTokens: string[]): number {
