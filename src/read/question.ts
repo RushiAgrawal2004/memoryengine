@@ -25,6 +25,7 @@ export interface RetrieveEvidenceOptions {
 }
 
 interface MemoryEvidenceRow extends RecallResult {
+  sourceEpisode: string | null;
   sourceSession: string | null;
   sourceSessionId: string | null;
   eventDate: string | null;
@@ -120,6 +121,7 @@ export async function retrieveEvidence(
   }
 
   const detailed = await detailsForEvidence(evidence);
+  evidence.push(...await expandBySourceEpisodeSnippets(trimmed, detailed, resolvedScope, options.asOf));
   evidence.push(...await expandBySourceSession(detailed, resolvedScope, options.asOf));
   evidence.push(...await expandBySharedEntitiesAndEvents(trimmed, evidence, resolvedScope, options.asOf));
 
@@ -142,7 +144,7 @@ export async function retrieveEvidence(
       id: `derived-answer:${hashText(`${trimmed}\n${composed}`)}`,
       type: "derived_answer",
       scope: resolvedScope ?? "global",
-      content: `Derived answer from retrieved evidence: ${composed}`,
+      content: `Answer: ${composed}`,
       rank: 1,
       createdAt: new Date().toISOString(),
     },
@@ -185,6 +187,7 @@ async function detailsForEvidence(results: RecallResult[]): Promise<MemoryEviden
     .filter((result) => !isUuid(result.id))
     .map((result) => ({
       ...result,
+      sourceEpisode: null,
       sourceSession: null,
       sourceSessionId: null,
       eventDate: null,
@@ -201,6 +204,7 @@ async function detailsForEvidence(results: RecallResult[]): Promise<MemoryEviden
     scope: string;
     content: string;
     createdAt: string;
+    sourceEpisode: string | null;
     sourceSession: string | null;
     sourceSessionId: string | null;
     eventDate: string | null;
@@ -211,6 +215,7 @@ async function detailsForEvidence(results: RecallResult[]): Promise<MemoryEviden
       scope,
       content,
       created_at::text as "createdAt",
+      source_episode::text as "sourceEpisode",
       source_session::text as "sourceSession",
       attrs->'observation'->>'sourceSessionId' as "sourceSessionId",
       attrs->'observation'->>'eventDate' as "eventDate"
@@ -234,6 +239,67 @@ async function detailsForEvidence(results: RecallResult[]): Promise<MemoryEviden
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     .test(value);
+}
+
+async function expandBySourceEpisodeSnippets(
+  query: string,
+  seeds: MemoryEvidenceRow[],
+  scope: string | undefined,
+  asOf: Date | undefined,
+): Promise<RecallResult[]> {
+  const episodeIds = [...new Set(
+    seeds
+      .map((seed) => seed.sourceEpisode)
+      .filter((id): id is string => Boolean(id && isUuid(id))),
+  )];
+  if (episodeIds.length === 0) {
+    return [];
+  }
+
+  const seedText = [query, ...seeds.map((seed) => seed.content)].join("\n");
+  const queryTokens = importantTokens(query);
+  const seedTokens = importantTokens(seedText);
+  const sql = getSqlClient();
+  const rows = await sql<Array<{
+    id: string;
+    scope: string;
+    content: string;
+    occurredAt: string;
+  }>>`
+    select id, scope, content, occurred_at::text as "occurredAt"
+    from episodes
+    where id in ${sql(episodeIds)}
+      and (${scope ?? null}::text is null or scope = ${scope ?? null})
+      and (${asOf ?? null}::timestamptz is null or occurred_at <= ${asOf ?? null})
+  `;
+
+  return rows
+    .flatMap((row) => {
+      const snippets = topEpisodeSnippets(row.content, queryTokens, seedTokens).map((snippet) => ({
+        id: `source-excerpt:${row.id}:${hashText(snippet)}`,
+        type: "source_excerpt",
+        scope: row.scope,
+        content: `Source episode excerpt: ${snippet}`,
+        rank: snippetScore(snippet, queryTokens, seedTokens) + 0.75,
+        createdAt: row.occurredAt,
+      }));
+      const digest = episodeDigestCandidate(row.content);
+      return digest
+        ? [
+            ...snippets,
+            {
+              id: `source-context:${row.id}:${hashText(digest)}`,
+              type: "source_context",
+              scope: row.scope,
+              content: `Source episode context: ${digest}`,
+              rank: Math.max(0.65, ...snippets.map((snippet) => snippet.rank - 0.1)),
+              createdAt: row.occurredAt,
+            },
+          ]
+        : snippets;
+    })
+    .sort((a, b) => b.rank - a.rank || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, Math.min(EXPANSION_LIMIT, episodeIds.length * 4));
 }
 
 async function expandBySourceSession(
@@ -295,6 +361,7 @@ async function activeMemoryRows(
             content,
             0::real as rank,
             created_at::text as "createdAt",
+            source_episode::text as "sourceEpisode",
             source_session::text as "sourceSession",
             attrs->'observation'->>'sourceSessionId' as "sourceSessionId",
             attrs->'observation'->>'eventDate' as "eventDate"
@@ -313,6 +380,7 @@ async function activeMemoryRows(
             content,
             0::real as rank,
             created_at::text as "createdAt",
+            source_episode::text as "sourceEpisode",
             source_session::text as "sourceSession",
             attrs->'observation'->>'sourceSessionId' as "sourceSessionId",
             attrs->'observation'->>'eventDate' as "eventDate"
@@ -331,6 +399,7 @@ async function activeMemoryRows(
             content,
             0::real as rank,
             created_at::text as "createdAt",
+            source_episode::text as "sourceEpisode",
             source_session::text as "sourceSession",
             attrs->'observation'->>'sourceSessionId' as "sourceSessionId",
             attrs->'observation'->>'eventDate' as "eventDate"
@@ -348,6 +417,7 @@ async function activeMemoryRows(
             content,
             0::real as rank,
             created_at::text as "createdAt",
+            source_episode::text as "sourceEpisode",
             source_session::text as "sourceSession",
             attrs->'observation'->>'sourceSessionId' as "sourceSessionId",
             attrs->'observation'->>'eventDate' as "eventDate"
@@ -367,7 +437,7 @@ function diversifyEvidence(results: MemoryEvidenceRow[], topN: number): RecallRe
     }
   }
 
-  const ordered = [...byId.values()].sort((a, b) =>
+  const ordered = dedupeNearDuplicateEvidence([...byId.values()]).sort((a, b) =>
     b.rank - a.rank
     || (b.eventDate ?? "").localeCompare(a.eventDate ?? "")
     || b.createdAt.localeCompare(a.createdAt)
@@ -395,6 +465,43 @@ function diversifyEvidence(results: MemoryEvidenceRow[], topN: number): RecallRe
   return [...selected, ...deferred].slice(0, topN).map(toRecallResult);
 }
 
+function dedupeNearDuplicateEvidence(results: MemoryEvidenceRow[]): MemoryEvidenceRow[] {
+  const kept: MemoryEvidenceRow[] = [];
+  for (const result of results) {
+    const duplicateIndex = kept.findIndex((existing) => isNearDuplicateEvidence(existing, result));
+    if (duplicateIndex === -1) {
+      kept.push(result);
+      continue;
+    }
+
+    const existing = kept[duplicateIndex];
+    if (preferEvidence(result, existing)) {
+      kept[duplicateIndex] = result;
+    }
+  }
+
+  return kept;
+}
+
+function isNearDuplicateEvidence(a: MemoryEvidenceRow, b: MemoryEvidenceRow): boolean {
+  const aTokens = importantTokens(a.content);
+  const bTokens = importantTokens(b.content);
+  return tokenCoverage(aTokens, bTokens) >= 0.8 || tokenCoverage(bTokens, aTokens) >= 0.8;
+}
+
+function preferEvidence(candidate: MemoryEvidenceRow, existing: MemoryEvidenceRow): boolean {
+  if (candidate.type === "source_excerpt" && existing.type !== "source_excerpt") {
+    return candidate.content.length + 30 < existing.content.length;
+  }
+
+  if (candidate.type !== "source_excerpt" && existing.type === "source_excerpt") {
+    return candidate.content.length <= existing.content.length + 30;
+  }
+
+  return candidate.content.length < existing.content.length
+    || (candidate.content.length === existing.content.length && candidate.rank > existing.rank);
+}
+
 function toRecallResult(row: MemoryEvidenceRow): RecallResult {
   return {
     id: row.id,
@@ -409,7 +516,128 @@ function toRecallResult(row: MemoryEvidenceRow): RecallResult {
 function sourceKey(row: MemoryEvidenceRow): string | undefined {
   return row.sourceSessionId?.toLowerCase()
     ?? row.sourceSession?.toLowerCase()
+    ?? row.sourceEpisode?.toLowerCase()
     ?? row.content.match(/^session\s+([^:\s]+)\b/i)?.[1]?.toLowerCase();
+}
+
+function topEpisodeSnippets(
+  content: string,
+  queryTokens: string[],
+  seedTokens: string[],
+): string[] {
+  const candidates = episodeSnippetCandidates(content)
+    .map((snippet) => ({
+      snippet,
+      score: snippetScore(snippet, queryTokens, seedTokens),
+      novelty: 1 - tokenCoverage(importantTokens(snippet), seedTokens),
+    }))
+    .filter((candidate) => candidate.score > 0 && candidate.novelty >= 0.25)
+    .sort((a, b) => b.score - a.score || a.snippet.length - b.snippet.length);
+
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const normalized = candidate.snippet.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+
+    selected.push(candidate.snippet);
+    seen.add(normalized);
+    if (selected.length >= 2) {
+      return selected;
+    }
+  }
+
+  return selected;
+}
+
+function episodeSnippetCandidates(content: string): string[] {
+  const chunks: string[] = [];
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const role = trimmed.match(/^(user|human|assistant|system)\s*:\s*(.+)$/i);
+    const body = role?.[2]?.trim() ?? trimmed;
+    const speaker = role?.[1]?.toLowerCase();
+    const keepAssistant = speaker === "assistant"
+      && /\b(?:remember|decided|implemented|verified|changed|uses|depends|fixed)\b/i.test(body);
+    if ((speaker === "assistant" || speaker === "system") && !keepAssistant) {
+      continue;
+    }
+
+    for (const sentence of splitIntoSnippets(body)) {
+      chunks.push(speaker ? `${speaker}: ${sentence}` : sentence);
+    }
+  }
+
+  return chunks;
+}
+
+function episodeDigestCandidate(content: string): string | null {
+  const candidates = episodeSnippetCandidates(content);
+  if (content.length < 500 && candidates.length < 3) {
+    return null;
+  }
+
+  const digest = candidates
+    .filter((candidate) => !/^assistant:\s*(?:sure|okay|thanks|i can|i will|let)/i.test(candidate))
+    .join(" | ")
+    .slice(0, 3000)
+    .trim();
+
+  return digest.length >= 80 ? digest : null;
+}
+
+function splitIntoSnippets(value: string): string[] {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= 260) {
+    return [compact];
+  }
+
+  const pieces = compact
+    .split(/(?<=[.!?])\s+/)
+    .map((piece) => piece.trim())
+    .filter(Boolean);
+  if (pieces.length === 0) {
+    return [compact.slice(0, 260)];
+  }
+
+  const snippets: string[] = [];
+  let current = "";
+  for (const piece of pieces) {
+    const next = current ? `${current} ${piece}` : piece;
+    if (next.length > 260 && current) {
+      snippets.push(current);
+      current = piece;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) {
+    snippets.push(current);
+  }
+
+  return snippets.map((snippet) => snippet.slice(0, 320));
+}
+
+function snippetScore(snippet: string, queryTokens: string[], seedTokens: string[]): number {
+  const tokens = importantTokens(snippet);
+  return sharedTokenScore(queryTokens, tokens) + (sharedTokenScore(seedTokens, tokens) * 0.35);
+}
+
+function tokenCoverage(tokens: string[], existingTokens: string[]): number {
+  if (tokens.length === 0 || existingTokens.length === 0) {
+    return 0;
+  }
+
+  const existing = new Set(existingTokens);
+  const covered = tokens.filter((token) => existing.has(token)).length;
+  return covered / tokens.length;
 }
 
 function isAbstention(value: string): boolean {
@@ -419,7 +647,14 @@ function isAbstention(value: string): boolean {
 function evidenceAlreadyContainsAnswer(evidence: RecallResult[], answer: string): boolean {
   const answerTokens = importantTokens(answer);
   if (answerTokens.length === 0) {
-    return true;
+    const normalizedAnswer = answer.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!normalizedAnswer || /\b(?:i don't know|unknown|insufficient|not enough)\b/i.test(normalizedAnswer)) {
+      return true;
+    }
+
+    return evidence
+      .map((item) => item.content.toLowerCase().replace(/\s+/g, " "))
+      .some((content) => content.includes(normalizedAnswer));
   }
 
   const text = evidence.map((item) => item.content).join("\n").toLowerCase();
@@ -460,7 +695,10 @@ function importantTokens(value: string): string[] {
     "latest",
     "many",
     "memory",
+    "episode",
+    "excerpt",
     "session",
+    "source",
     "that",
     "the",
     "this",
@@ -475,6 +713,7 @@ function importantTokens(value: string): string[] {
     value
       .toLowerCase()
       .match(/[a-z0-9_.-]+/g)
-      ?.filter((token) => token.length >= 4 && !stopwords.has(token)) ?? [],
+      ?.map((token) => token.replace(/^[._-]+|[._-]+$/g, ""))
+      .filter((token) => token.length >= 4 && !stopwords.has(token)) ?? [],
   )].slice(0, 24);
 }

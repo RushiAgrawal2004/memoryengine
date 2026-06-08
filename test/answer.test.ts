@@ -38,6 +38,29 @@ describe("answerQuestion", () => {
     expect(debug.usedEvidence).toEqual([1, 2]);
   });
 
+  it("calculates days-between answers from multiple dated snippets in one source context", async () => {
+    const answer = await answerQuestion({
+      question: "How many days passed between the Walk for Hunger and Coastal Cleanup events?",
+      evidence: [
+        "Source episode context: user: I did the Walk for Hunger on February 21st. | user: I volunteered at the Coastal Cleanup event on March 7th.",
+      ],
+    });
+
+    expect(answer).toBe("14 days.");
+  });
+
+  it("understands slash dates in dated evidence", async () => {
+    const answer = await answerQuestion({
+      question: "How many days did it take to find a house after starting with Rachel?",
+      evidence: [
+        "user: I started working with Rachel on 2/15.",
+        "user: I found a house I loved on 3/1.",
+      ],
+    });
+
+    expect(answer).toBe("14 days.");
+  });
+
   it("abstains when evidence is insufficient", async () => {
     const answer = await answerQuestion({
       question: "Which database does production use?",

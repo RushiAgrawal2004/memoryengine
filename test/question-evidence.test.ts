@@ -24,6 +24,7 @@ describe("multi-hop evidence retrieval", () => {
     for (const scope of scopes.splice(0)) {
       await sql`delete from traces where scope = ${scope}`;
       await sql`delete from memories where scope = ${scope}`;
+      await sql`delete from episodes where scope = ${scope}`;
     }
   });
 
@@ -57,6 +58,7 @@ describe("multi-hop evidence retrieval", () => {
       { topN: 2 },
     );
 
+    expect(evidence[0]?.content).toBe("Answer: 19 days.");
     expect(evidence.map((item) => item.content)).toEqual(
       expect.arrayContaining([
         "The beta launch happened on May 1, 2026.",
@@ -99,6 +101,34 @@ describe("multi-hop evidence retrieval", () => {
     expect(joined).toContain("Dashboard routes require auth middleware");
   });
 
+  it("expands compressed memories with relevant source episode excerpts", async () => {
+    const scope = testScope(scopes);
+    const episodeId = await insertEpisode({
+      scope,
+      content: [
+        "user: After the service appointment, the GPS system was not functioning correctly.",
+        "assistant: You may need to contact the service center.",
+        "user: The repair was finished two days later.",
+      ].join("\n"),
+    });
+    await insertMemory({
+      scope,
+      content: "The car had a GPS issue after the service appointment.",
+      sourceSessionId: "car-session",
+      sourceEpisode: episodeId,
+    });
+
+    const evidence = await retrieveEvidence(
+      "what was not functioning correctly after the service appointment",
+      scope,
+      { topN: 3, composeAnswer: false },
+    );
+    const joined = evidence.map((item) => item.content).join("\n");
+
+    expect(joined).toContain("Source episode excerpt");
+    expect(joined).toContain("GPS system was not functioning correctly");
+  });
+
   it("uses larger adaptive k for temporal and multi-session questions", () => {
     expect(classifyQuestion("what package manager do we use")).toBe("single_fact");
     expect(classifyQuestion("how many days between launch and migration")).toBe(
@@ -114,16 +144,18 @@ async function insertMemory(input: {
   scope: string;
   content: string;
   sourceSessionId: string;
+  sourceEpisode?: string;
   eventDate?: string;
 }): Promise<void> {
   const sql = getSqlClient();
   await sql`
-    insert into memories (type, scope, content, status, attrs)
+    insert into memories (type, scope, content, status, source_episode, attrs)
     values (
       'semantic',
       ${input.scope},
       ${input.content},
       'active',
+      ${input.sourceEpisode ?? null},
       ${sql.json({
         observation: {
           sourceSessionId: input.sourceSessionId,
@@ -143,6 +175,19 @@ async function insertMemory(input: {
       } as never)}
     )
   `;
+}
+
+async function insertEpisode(input: {
+  scope: string;
+  content: string;
+}): Promise<string> {
+  const sql = getSqlClient();
+  const [row] = await sql<Array<{ id: string }>>`
+    insert into episodes (scope, kind, content, source, occurred_at)
+    values (${input.scope}, 'message', ${input.content}, 'test', now())
+    returning id::text as id
+  `;
+  return row.id;
 }
 
 function testScope(scopes: string[]): string {

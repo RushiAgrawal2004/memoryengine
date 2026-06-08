@@ -117,7 +117,9 @@ function answerDateQuestion(
   evidence: string[],
 ): AnswerQuestionOutput | undefined {
   const dated = evidence
-    .map((item, index) => ({ index, text: item, date: firstDate(item) }))
+    .flatMap((item, index) =>
+      datedSegments(item).map((text) => ({ index, text, date: firstDate(text) }))
+    )
     .filter((item): item is { index: number; text: string; date: Date } => Boolean(item.date));
 
   if (dated.length < 2) {
@@ -153,6 +155,16 @@ function answerDateQuestion(
   }
 
   return undefined;
+}
+
+function datedSegments(value: string): string[] {
+  const segments = value
+    .replace(/^Source episode context:\s*/i, "")
+    .split(/\s+\|\s+|(?<=[.!?])\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  return segments.length > 0 ? segments : [value];
 }
 
 function answerLatestFact(question: string, evidence: string[]): AnswerQuestionOutput | undefined {
@@ -212,6 +224,17 @@ function selectDatedEvidence(
   question: string,
   dated: Array<{ index: number; text: string; date: Date }>,
 ): Array<{ index: number; text: string; date: Date }> {
+  const betweenParts = question.match(/\bbetween\s+(.+?)\s+and\s+(.+?)(?:[?.]|$)/i);
+  if (betweenParts) {
+    const selected = [betweenParts[1], betweenParts[2]]
+      .map((part) => bestDatedMatch(part, dated))
+      .filter((item): item is { index: number; text: string; date: Date } => Boolean(item));
+    const unique = uniqueDatedMentions(selected);
+    if (unique.length >= 2) {
+      return unique.slice(0, 2);
+    }
+  }
+
   const tokens = meaningfulTokens(question);
   const scored = dated
     .map((item) => ({
@@ -222,6 +245,38 @@ function selectDatedEvidence(
 
   const positive = scored.filter((item) => item.score > 0);
   return (positive.length >= 2 ? positive : scored).slice(0, 2);
+}
+
+function bestDatedMatch(
+  subject: string,
+  dated: Array<{ index: number; text: string; date: Date }>,
+): { index: number; text: string; date: Date } | undefined {
+  const tokens = meaningfulTokens(subject);
+  return dated
+    .map((item) => ({
+      ...item,
+      score: sharedCount(tokens, meaningfulTokens(item.text)),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.text.length - b.text.length)[0];
+}
+
+function uniqueDatedMentions(
+  dated: Array<{ index: number; text: string; date: Date }>,
+): Array<{ index: number; text: string; date: Date }> {
+  const seen = new Set<string>();
+  const unique: Array<{ index: number; text: string; date: Date }> = [];
+  for (const item of dated) {
+    const key = `${item.date.toISOString()}:${item.text.toLowerCase()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
 }
 
 function bestSubjectForBeforeAfter(
@@ -241,6 +296,14 @@ function bestSubjectForBeforeAfter(
 }
 
 function firstDate(value: string): Date | undefined {
+  const slash = value.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (slash) {
+    const year = slash[3]
+      ? normalizeYear(Number(slash[3]))
+      : new Date().getUTCFullYear();
+    return validDate(year, Number(slash[1]) - 1, Number(slash[2]));
+  }
+
   const iso = value.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
   if (iso) {
     return validDate(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
@@ -266,6 +329,10 @@ function firstDate(value: string): Date | undefined {
   }
 
   return undefined;
+}
+
+function normalizeYear(year: number): number {
+  return year < 100 ? 2000 + year : year;
 }
 
 const months: Record<string, number> = {
