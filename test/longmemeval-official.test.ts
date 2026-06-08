@@ -64,6 +64,12 @@ describe("official LongMemEval runner", () => {
       scratchPrefix: `test-longmem-official:${crypto.randomUUID()}`,
     });
     const hypotheses = await readFile(output.hypothesesPath, "utf8");
+    const errors = JSON.parse(await readFile(output.errorsPath, "utf8")) as Array<{
+      question_id: string;
+      retrieved_evidence_summaries: string[];
+      source_session_ids: string[];
+    }>;
+    const diagnostics = await readFile(output.diagnosticsPath, "utf8");
     const debug = JSON.parse(await readFile(output.debugPath, "utf8")) as {
       official: boolean;
       splitName: string;
@@ -71,6 +77,8 @@ describe("official LongMemEval runner", () => {
         question_id: string;
         question_type: string;
         retrieved_memory_ids: string[];
+        evidence_summaries: string[];
+        source_session_ids: string[];
         context_chars: number;
         hypothesis: string;
         gold_answer: string;
@@ -99,7 +107,16 @@ describe("official LongMemEval runner", () => {
       ],
     });
     expect(debug.items[0]?.retrieved_memory_ids.length).toBeGreaterThan(0);
+    expect(debug.items[0]?.evidence_summaries.length).toBeGreaterThan(0);
     expect(debug.items[0]?.context_chars).toBeGreaterThan(0);
+    expect(errors).toEqual([
+      expect.objectContaining({
+        question_id: "q-fixture",
+        retrieved_evidence_summaries: expect.any(Array),
+        source_session_ids: expect.any(Array),
+      }),
+    ]);
+    expect(diagnostics).toContain("# LongMemEval Diagnostics");
   }, 30000);
 
   it("constructs the official LongMemEval judge command", () => {

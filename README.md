@@ -228,6 +228,14 @@ The official judge writes `official-judge.stdout.txt`,
 the run directory. Python and the LongMemEval repo are only required when
 `--official-judge` is used; normal `npm test` does not need them.
 
+Every official-style run also writes `errors.json` and `diagnostics.md`.
+`errors.json` keeps one row per question with correctness when available, gold
+answer, hypothesis, retrieved evidence summaries, source session IDs, context
+size, latency, and a guessed failure bucket such as `retrieval_miss`,
+`answer_miss`, `temporal_calc`, `stale_update`, or `abstention`. The markdown
+report groups accuracy, recall, latency, top failures, and the suggested next fix
+by question type.
+
 Current local smoke result compares memory retrieval against a fair no-store baseline that receives the same session history as raw context:
 
 | Mode | Items | Probes | Recall/coverage | Answer accuracy | p50 context | p95 context | p50 latency | p95 latency |

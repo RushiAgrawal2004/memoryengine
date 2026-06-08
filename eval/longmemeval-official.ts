@@ -8,6 +8,7 @@ import { config } from "../src/lib/config.js";
 import { answerQuestion } from "../src/read/answer.js";
 import { retrieve } from "../src/read/retrieve.js";
 import { remember } from "../src/write/remember.js";
+import { writeLongMemEvalDiagnostics } from "./longmemeval-diagnostics.js";
 import { loadLongMemEvalDatasets } from "./harness.js";
 
 const execFileAsync = promisify(execFile);
@@ -31,6 +32,8 @@ export interface LongMemEvalOfficialOutput {
   items: number;
   hypothesesPath: string;
   debugPath: string;
+  errorsPath: string;
+  diagnosticsPath: string;
   officialJudge?: OfficialJudgeResult;
 }
 
@@ -68,6 +71,8 @@ interface DebugRow {
   question_id: string;
   question_type?: string;
   retrieved_memory_ids: string[];
+  evidence_summaries: string[];
+  source_session_ids: string[];
   context_chars: number;
   latency_ms: number;
   hypothesis: string;
@@ -119,6 +124,7 @@ export async function runLongMemEvalOfficial(
         topN: probe.k ?? 5,
       });
       const evidence = memories.map((memory) => memory.content);
+      const evidenceDetails = await evidenceDetailsForDebug(memories.map((memory) => memory.id));
       const hypothesis = await answerQuestion({
         question: probe.question,
         evidence,
@@ -133,6 +139,8 @@ export async function runLongMemEvalOfficial(
         question_id: item.id,
         ...(probe.questionType ? { question_type: probe.questionType } : {}),
         retrieved_memory_ids: memories.map((memory) => memory.id),
+        evidence_summaries: memories.map((memory) => summarizeEvidence(memory.content)),
+        source_session_ids: sourceSessionIdsForDebug(memories.map((memory) => memory.content), evidenceDetails),
         context_chars: evidence.join("\n").length,
         latency_ms: Math.round(latencyMs),
         hypothesis,
@@ -168,6 +176,11 @@ export async function runLongMemEvalOfficial(
         pythonCommand: options.pythonCommand ?? process.env.PYTHON ?? "python",
       })
     : undefined;
+  const diagnostics = await writeLongMemEvalDiagnostics({
+    debugPath,
+    officialLog: officialJudge ? await readFile(officialJudge.logPath, "utf8").catch(() => undefined) : undefined,
+    outDir,
+  });
 
   return {
     official,
@@ -175,8 +188,64 @@ export async function runLongMemEvalOfficial(
     items: debug.length,
     hypothesesPath,
     debugPath,
+    errorsPath: diagnostics.errorsPath,
+    diagnosticsPath: diagnostics.markdownPath,
     ...(officialJudge ? { officialJudge } : {}),
   };
+}
+
+async function evidenceDetailsForDebug(memoryIds: string[]): Promise<Map<string, {
+  sourceSessionId?: string;
+  sourceSession?: string;
+}>> {
+  if (memoryIds.length === 0) {
+    return new Map();
+  }
+
+  const sql = getSqlClient();
+  const rows = await sql<Array<{
+    id: string;
+    sourceSession: string | null;
+    sourceSessionId: string | null;
+  }>>`
+    select
+      id,
+      source_session::text as "sourceSession",
+      attrs->'observation'->>'sourceSessionId' as "sourceSessionId"
+    from memories
+    where id in ${sql(memoryIds)}
+  `;
+
+  return new Map(rows.map((row) => [
+    row.id,
+    {
+      ...(row.sourceSessionId ? { sourceSessionId: row.sourceSessionId } : {}),
+      ...(row.sourceSession ? { sourceSession: row.sourceSession } : {}),
+    },
+  ]));
+}
+
+function sourceSessionIdsForDebug(
+  evidence: string[],
+  details: Map<string, { sourceSessionId?: string; sourceSession?: string }>,
+): string[] {
+  const fromDetails = [...details.values()]
+    .map((detail) => detail.sourceSessionId ?? detail.sourceSession)
+    .filter((value): value is string => Boolean(value));
+  const fromContent = evidence
+    .flatMap((item) => [
+      item.match(/\bLongMemEval session_id:\s*([^\s]+)/i)?.[1],
+      item.match(/^session\s+([^:\s]+)\b/i)?.[1],
+      item.match(/\bsession[_\s-]?id:\s*([a-z0-9_.-]+)/i)?.[1],
+    ])
+    .filter((value): value is string => Boolean(value));
+
+  return [...new Set([...fromDetails, ...fromContent])].sort();
+}
+
+function summarizeEvidence(value: string): string {
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned.length > 220 ? `${cleaned.slice(0, 217)}...` : cleaned;
 }
 
 export function buildOfficialJudgeCommand(input: {
