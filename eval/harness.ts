@@ -5,7 +5,7 @@ import path from "node:path";
 import { getSqlClient, closeDb } from "../src/db/client.js";
 import { config } from "../src/lib/config.js";
 import { getLLM } from "../src/providers/llm.js";
-import { retrieve } from "../src/read/retrieve.js";
+import { retrieveEvidence } from "../src/read/question.js";
 import { remember } from "../src/write/remember.js";
 
 export interface BenchmarkProbe {
@@ -382,7 +382,9 @@ async function contextForProbe(
     };
   }
 
-  const docs = await retrieve({ query: probe.question, scope, topN: probe.k ?? DEFAULT_K });
+  const docs = await retrieveEvidence(probe.question, scope, {
+    topN: probe.k ?? undefined,
+  });
   return {
     context: docs.map((doc) => doc.content).join("\n"),
     memoryIds: docs.map((doc) => doc.id),
@@ -765,7 +767,8 @@ async function evidenceRecalled(
 }
 
 async function sourceEpisodeTextsForMemories(memoryIds: string[]): Promise<string[]> {
-  if (memoryIds.length === 0) {
+  const realMemoryIds = memoryIds.filter(isUuid);
+  if (realMemoryIds.length === 0) {
     return [];
   }
 
@@ -774,10 +777,15 @@ async function sourceEpisodeTextsForMemories(memoryIds: string[]): Promise<strin
     select episodes.content
     from memories
     join episodes on episodes.id = memories.source_episode
-    where memories.id in ${sql(memoryIds)}
+    where memories.id in ${sql(realMemoryIds)}
   `;
 
   return rows.map((row) => row.content);
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(value);
 }
 
 function percentile(values: number[], p: number): number {

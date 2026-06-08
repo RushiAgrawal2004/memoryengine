@@ -82,7 +82,7 @@ describe("temporal memory normalization and retrieval", () => {
     const results = await retrieve({
       scope,
       query: "how many days between launch and migration",
-      topN: 2,
+      topN: 3,
     });
 
     expect(results.map((result) => result.content)).toEqual(
@@ -91,6 +91,71 @@ describe("temporal memory normalization and retrieval", () => {
         "The migration happened on June 10, 2026.",
       ]),
     );
+  });
+
+  it("adds a derived days-between recall snippet for temporal questions", async () => {
+    const scope = testScope(scopes);
+    await insertTemporalMemory({
+      scope,
+      content: "The launch happened on June 1, 2026.",
+      eventDate: "2026-06-01T00:00:00.000Z",
+    });
+    await insertTemporalMemory({
+      scope,
+      content: "The migration happened on June 10, 2026.",
+      eventDate: "2026-06-10T00:00:00.000Z",
+    });
+
+    const [result] = await retrieve({
+      scope,
+      query: "how many days between launch and migration",
+      topN: 1,
+    });
+
+    expect(result?.type).toBe("derived_temporal");
+    expect(result?.content).toContain("9 days.");
+    expect(result?.content).toContain("10 days including the last day is also acceptable.");
+  });
+
+  it("adds a derived combined-duration recall snippet", async () => {
+    const scope = testScope(scopes);
+    await insertTemporalMemory({
+      scope,
+      content: "I finished The Seven Husbands of Evelyn Hugo, which took me two and a half weeks to finish.",
+      eventDate: "2026-06-01T00:00:00.000Z",
+      temporalRefs: [
+        {
+          text: "two and a half weeks",
+          kind: "duration",
+          amount: 2.5,
+          unit: "week",
+          days: 17.5,
+        },
+      ],
+    });
+    await insertTemporalMemory({
+      scope,
+      content: "The Nightingale took me about three weeks to finish.",
+      eventDate: "2026-06-10T00:00:00.000Z",
+      temporalRefs: [
+        {
+          text: "three weeks",
+          kind: "duration",
+          amount: 3,
+          unit: "week",
+          days: 21,
+        },
+      ],
+    });
+
+    const [result] = await retrieve({
+      scope,
+      query: "How long did I take to finish The Seven Husbands of Evelyn Hugo and The Nightingale combined?",
+      topN: 1,
+    });
+
+    expect(result?.type).toBe("derived_temporal");
+    expect(result?.content).toContain("5.5 weeks.");
   });
 
   it("returns the latest dated fact first when temporal facts conflict", async () => {
@@ -120,6 +185,7 @@ async function insertTemporalMemory(input: {
   scope: string;
   content: string;
   eventDate: string;
+  temporalRefs?: Array<Record<string, unknown>>;
 }): Promise<void> {
   const sql = getSqlClient();
   await sql`
@@ -134,6 +200,7 @@ async function insertTemporalMemory(input: {
           eventDate: input.eventDate,
           mentionedAt: "2026-06-08T12:00:00.000Z",
           temporalRefs: [
+            ...(input.temporalRefs ?? []),
             {
               text: input.eventDate.slice(0, 10),
               kind: "explicit_date",

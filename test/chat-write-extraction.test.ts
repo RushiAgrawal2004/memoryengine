@@ -42,6 +42,8 @@ describe("chat history memory writing", () => {
       sourceSessionId: "chat-a",
       speaker: "user",
       sessionDate: "2026/06/08 (Mon) 09:00",
+      eventDate: "2026-06-08T00:00:00.000Z",
+      mentionedAt: "2026-06-08T00:00:00.000Z",
       observationType: "user_fact",
     });
   });

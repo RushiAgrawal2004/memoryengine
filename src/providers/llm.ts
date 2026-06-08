@@ -663,14 +663,40 @@ function enrichObservation(
   occurredAt: Date,
 ): LocalObservation {
   const temporal = normalizeTemporalText(input.observationText, occurredAt);
+  const sessionDate = input.sessionDate ? parseSessionDate(input.sessionDate) : undefined;
+  const eventDate = temporal.eventDate ?? sessionDate;
   return {
     ...input,
     observationType: input.observationType ?? observationTypeFor(input.observationText),
-    mentionedDate: temporal.eventDate,
-    eventDate: temporal.eventDate,
-    mentionedAt: temporal.mentionedAt,
+    mentionedDate: eventDate,
+    eventDate,
+    mentionedAt: temporal.mentionedAt ?? sessionDate,
     temporalRefs: temporal.temporalRefs,
   };
+}
+
+function parseSessionDate(value: string): string | undefined {
+  const slash = value.trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (slash) {
+    return isoDate(Number(slash[1]), Number(slash[2]) - 1, Number(slash[3]));
+  }
+
+  const dash = value.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (dash) {
+    return isoDate(Number(dash[1]), Number(dash[2]) - 1, Number(dash[3]));
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+function isoDate(year: number, month: number, day: number): string | undefined {
+  const date = new Date(Date.UTC(year, month, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month
+    && date.getUTCDate() === day
+    ? date.toISOString()
+    : undefined;
 }
 
 function observationTypeFor(text: string): LocalObservation["observationType"] {

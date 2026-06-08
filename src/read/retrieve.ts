@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 import {
+  derivedTemporalRecall,
   ftsRecall,
   graphRecall,
   keywordRecall,
@@ -31,15 +32,23 @@ export async function retrieve(
   }
   const started = performance.now();
 
-  const [vectorResults, ftsResults, keywordResults, graphResults, temporalResults] = await Promise.all([
+  const [vectorResults, ftsResults, keywordResults, graphResults, temporalResults, derivedTemporalResults] = await Promise.all([
     vectorRecall(trimmed, resolvedScope, RECALL_K, asOf),
     ftsRecall(trimmed, resolvedScope, RECALL_K, asOf),
     keywordRecall(trimmed, resolvedScope, RECALL_K, asOf),
     graphRecall(trimmed, resolvedScope, RECALL_K, asOf),
     temporalRecall(trimmed, resolvedScope, RECALL_K, asOf),
+    derivedTemporalRecall(trimmed, resolvedScope, RECALL_K, asOf),
   ]);
 
-  const fusedRanked = rrf([vectorResults, ftsResults, keywordResults, graphResults, temporalResults]);
+  const fusedRanked = rrf([
+    derivedTemporalResults,
+    vectorResults,
+    ftsResults,
+    keywordResults,
+    graphResults,
+    temporalResults,
+  ]);
   const fused = fusedRanked
     .slice(0, RERANK_CANDIDATES)
     .map((result) => result.item);
@@ -54,6 +63,7 @@ export async function retrieve(
       keywordResults,
       graphResults,
       temporalResults,
+      derivedTemporalResults,
       rrfResults: fusedRanked,
       reranked: [],
       fused,
@@ -85,6 +95,7 @@ export async function retrieve(
     keywordResults,
     graphResults,
     temporalResults,
+    derivedTemporalResults,
     rrfResults: fusedRanked,
     reranked,
     fused,
@@ -103,6 +114,7 @@ interface RetrieveTraceInput {
   keywordResults: RecallResult[];
   graphResults: RecallResult[];
   temporalResults: RecallResult[];
+  derivedTemporalResults: RecallResult[];
   rrfResults: Array<{ item: RecallResult; score: number }>;
   reranked: Array<{ index: number; score: number }>;
   fused: RecallResult[];
@@ -125,6 +137,7 @@ async function saveRetrieveTrace(input: RetrieveTraceInput): Promise<void> {
         keyword: traceHits(input.keywordResults),
         graph: traceHits(input.graphResults),
         temporal: traceHits(input.temporalResults),
+        derivedTemporal: traceHits(input.derivedTemporalResults),
       },
       postRrf: input.rrfResults.map((result, index) => ({
         rank: index + 1,

@@ -155,9 +155,17 @@ function isTemporalKind(kind: QuestionKind): boolean {
 }
 
 async function detailsForEvidence(results: RecallResult[]): Promise<MemoryEvidenceRow[]> {
-  const ids = [...new Set(results.map((result) => result.id))];
+  const synthetic = results
+    .filter((result) => !isUuid(result.id))
+    .map((result) => ({
+      ...result,
+      sourceSession: null,
+      sourceSessionId: null,
+      eventDate: null,
+    }));
+  const ids = [...new Set(results.map((result) => result.id).filter(isUuid))];
   if (ids.length === 0) {
-    return [];
+    return synthetic;
   }
 
   const sql = getSqlClient();
@@ -188,10 +196,18 @@ async function detailsForEvidence(results: RecallResult[]): Promise<MemoryEviden
     Math.max(result.rank, 1 / (index + 1)),
   ]));
 
-  return rows.map((row) => ({
-    ...row,
-    rank: rankById.get(row.id) ?? 0,
-  }));
+  return [
+    ...synthetic,
+    ...rows.map((row) => ({
+      ...row,
+      rank: rankById.get(row.id) ?? 0,
+    })),
+  ];
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(value);
 }
 
 async function expandBySourceSession(
