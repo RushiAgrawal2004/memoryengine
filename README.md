@@ -191,6 +191,7 @@ Run a LongMemEval oracle smoke benchmark after downloading the public dataset in
 `eval/datasets/longmemeval_oracle.json`:
 
 ```sh
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/download-longmemeval.ps1
 npm run eval -- --dataset longmemeval --file eval/datasets/longmemeval_oracle.json --dataset-name longmemeval-oracle-local-50 --limit 50 --allow-local
 ```
 
@@ -209,6 +210,23 @@ This writes `hypotheses.jsonl` with `{ question_id, hypothesis }` lines plus
 answer. Runs with `--allow-local` are development smoke runs, not official scores.
 For a real score, remove `--allow-local`, configure hosted providers, then pass the
 JSONL file to LongMemEval's `evaluate_qa.py`.
+
+To run the official LongMemEval judge from this runner, clone the benchmark repo and
+point `LONGMEMEVAL_REPO` at it:
+
+```sh
+git clone https://github.com/xiaowu0162/LongMemEval.git E:/bench/LongMemEval
+cd E:/bench/LongMemEval
+pip install -r requirements-lite.txt
+cd E:/memoryengine
+$env:LONGMEMEVAL_REPO="E:/bench/LongMemEval"
+npx tsx eval/longmemeval-official.ts --file eval/datasets/longmemeval_s_cleaned.json --split-name longmemeval_s --out eval/results/longmemeval-official/hosted-full --official-judge --judge-model gpt-4o
+```
+
+The official judge writes `official-judge.stdout.txt`,
+`official-judge.stderr.txt`, `official-judge.log`, and `official-judge.json` in
+the run directory. Python and the LongMemEval repo are only required when
+`--official-judge` is used; normal `npm test` does not need them.
 
 Current local smoke result compares memory retrieval against a fair no-store baseline that receives the same session history as raw context:
 

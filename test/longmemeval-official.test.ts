@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { closeDb } from "../src/db/client.js";
-import { runLongMemEvalOfficial } from "../eval/longmemeval-official.js";
+import {
+  buildOfficialJudgeCommand,
+  parseOfficialJudgeLog,
+  runLongMemEvalOfficial,
+} from "../eval/longmemeval-official.js";
 
 describe("official LongMemEval runner", () => {
   const tempDirs: string[] = [];
@@ -97,6 +101,63 @@ describe("official LongMemEval runner", () => {
     expect(debug.items[0]?.retrieved_memory_ids.length).toBeGreaterThan(0);
     expect(debug.items[0]?.context_chars).toBeGreaterThan(0);
   }, 30000);
+
+  it("constructs the official LongMemEval judge command", () => {
+    const command = buildOfficialJudgeCommand({
+      longMemEvalRepo: "C:/bench/LongMemEval",
+      model: "gpt-4o",
+      hypothesesPath: "E:/memoryengine/eval/results/run/hypotheses.jsonl",
+      datasetPath: "E:/memoryengine/eval/datasets/longmemeval_s_cleaned.json",
+      pythonCommand: "python3",
+    });
+
+    expect(command).toEqual({
+      command: "python3",
+      args: [
+        "evaluate_qa.py",
+        "gpt-4o",
+        path.resolve("E:/memoryengine/eval/results/run/hypotheses.jsonl"),
+        path.resolve("E:/memoryengine/eval/datasets/longmemeval_s_cleaned.json"),
+      ],
+      cwd: path.join(path.resolve("C:/bench/LongMemEval"), "src", "evaluation"),
+      expectedLogPath: `${path.resolve("E:/memoryengine/eval/results/run/hypotheses.jsonl")}.log`,
+    });
+  });
+
+  it("parses official judge JSONL logs into overall and per-category accuracy", () => {
+    const metrics = parseOfficialJudgeLog(
+      [
+        '{"question_id":"q1","autoeval_label":true}',
+        '{"question_id":"q2","autoeval_label":false}',
+        '{"question_id":"q3","question_type":"temporal-reasoning","autoeval_label":"correct"}',
+        "Overall accuracy: 66.7%",
+      ].join("\n"),
+      [
+        { question_id: "q1", question_type: "single-session-user" },
+        { question_id: "q2", question_type: "single-session-user" },
+      ],
+    );
+
+    expect(metrics).toEqual({
+      overallAccuracy: 2 / 3,
+      total: 3,
+      correct: 2,
+      perCategory: [
+        {
+          category: "single-session-user",
+          accuracy: 0.5,
+          total: 2,
+          correct: 1,
+        },
+        {
+          category: "temporal-reasoning",
+          accuracy: 1,
+          total: 1,
+          correct: 1,
+        },
+      ],
+    });
+  });
 
   async function makeTempDir(prefix: string): Promise<string> {
     const dir = await mkdtemp(path.join(os.tmpdir(), prefix));

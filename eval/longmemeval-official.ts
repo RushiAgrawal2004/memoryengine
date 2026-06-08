@@ -1,12 +1,16 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
+import { promisify } from "node:util";
 import { closeDb, getSqlClient } from "../src/db/client.js";
 import { config } from "../src/lib/config.js";
 import { answerQuestion } from "../src/read/answer.js";
 import { retrieve } from "../src/read/retrieve.js";
 import { remember } from "../src/write/remember.js";
 import { loadLongMemEvalDatasets } from "./harness.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface LongMemEvalOfficialOptions {
   file?: string;
@@ -15,6 +19,10 @@ export interface LongMemEvalOfficialOptions {
   out?: string;
   allowLocal?: boolean;
   scratchPrefix?: string;
+  officialJudge?: boolean;
+  judgeModel?: string;
+  longMemEvalRepo?: string;
+  pythonCommand?: string;
 }
 
 export interface LongMemEvalOfficialOutput {
@@ -23,6 +31,37 @@ export interface LongMemEvalOfficialOutput {
   items: number;
   hypothesesPath: string;
   debugPath: string;
+  officialJudge?: OfficialJudgeResult;
+}
+
+export interface OfficialJudgeCommand {
+  command: string;
+  args: string[];
+  cwd: string;
+  expectedLogPath: string;
+}
+
+export interface OfficialJudgeMetrics {
+  overallAccuracy?: number;
+  total?: number;
+  correct?: number;
+  perCategory: Array<{
+    category: string;
+    accuracy: number;
+    total: number;
+    correct: number;
+  }>;
+}
+
+export interface OfficialJudgeResult {
+  model: string;
+  datasetPath: string;
+  command: OfficialJudgeCommand;
+  logPath: string;
+  stdoutPath: string;
+  stderrPath: string;
+  summaryPath: string;
+  metrics: OfficialJudgeMetrics;
 }
 
 interface DebugRow {
@@ -119,13 +158,212 @@ export async function runLongMemEvalOfficial(
     items: debug,
   }, null, 2)}\n`);
 
+  const officialJudge = options.officialJudge
+    ? await runOfficialLongMemEvalJudge({
+        longMemEvalRepo: options.longMemEvalRepo ?? process.env.LONGMEMEVAL_REPO,
+        model: options.judgeModel ?? process.env.LONGMEMEVAL_JUDGE_MODEL ?? "gpt-4o",
+        datasetPath: options.file ?? DEFAULT_DATASET_DIR,
+        hypothesesPath,
+        outDir,
+        pythonCommand: options.pythonCommand ?? process.env.PYTHON ?? "python",
+      })
+    : undefined;
+
   return {
     official,
     splitName,
     items: debug.length,
     hypothesesPath,
     debugPath,
+    ...(officialJudge ? { officialJudge } : {}),
   };
+}
+
+export function buildOfficialJudgeCommand(input: {
+  longMemEvalRepo: string;
+  model: string;
+  hypothesesPath: string;
+  datasetPath: string;
+  pythonCommand?: string;
+}): OfficialJudgeCommand {
+  const repo = path.resolve(input.longMemEvalRepo);
+  const hypothesesPath = path.resolve(input.hypothesesPath);
+  const datasetPath = path.resolve(input.datasetPath);
+
+  return {
+    command: input.pythonCommand ?? "python",
+    args: ["evaluate_qa.py", input.model, hypothesesPath, datasetPath],
+    cwd: path.join(repo, "src", "evaluation"),
+    expectedLogPath: `${hypothesesPath}.log`,
+  };
+}
+
+export function parseOfficialJudgeLog(
+  logText: string,
+  datasetRows: Array<{ question_id?: string; question_type?: string }> = [],
+): OfficialJudgeMetrics {
+  const typeById = new Map(
+    datasetRows
+      .filter((row) => row.question_id && row.question_type)
+      .map((row) => [row.question_id as string, row.question_type as string]),
+  );
+  const scoredRows: Array<{ category: string; correct: boolean }> = [];
+
+  for (const line of logText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) {
+      continue;
+    }
+
+    try {
+      const row = JSON.parse(trimmed) as {
+        question_id?: string;
+        question_type?: string;
+        autoeval_label?: unknown;
+      };
+      const label = labelToBoolean(row.autoeval_label);
+      if (label === undefined) {
+        continue;
+      }
+
+      scoredRows.push({
+        category: row.question_type
+          ?? (row.question_id ? typeById.get(row.question_id) : undefined)
+          ?? "unknown",
+        correct: label,
+      });
+    } catch {
+      continue;
+    }
+  }
+
+  const categoryCounts = new Map<string, { total: number; correct: number }>();
+  for (const row of scoredRows) {
+    const current = categoryCounts.get(row.category) ?? { total: 0, correct: 0 };
+    current.total += 1;
+    current.correct += row.correct ? 1 : 0;
+    categoryCounts.set(row.category, current);
+  }
+
+  const total = scoredRows.length;
+  const correct = scoredRows.filter((row) => row.correct).length;
+  const stdoutAccuracy = parsePrintedAccuracy(logText);
+
+  return {
+    overallAccuracy: total > 0 ? correct / total : stdoutAccuracy,
+    ...(total > 0 ? { total, correct } : {}),
+    perCategory: [...categoryCounts.entries()]
+      .map(([category, counts]) => ({
+        category,
+        accuracy: counts.correct / counts.total,
+        total: counts.total,
+        correct: counts.correct,
+      }))
+      .sort((a, b) => a.category.localeCompare(b.category)),
+  };
+}
+
+async function runOfficialLongMemEvalJudge(input: {
+  longMemEvalRepo?: string;
+  model: string;
+  datasetPath: string;
+  hypothesesPath: string;
+  outDir: string;
+  pythonCommand: string;
+}): Promise<OfficialJudgeResult> {
+  if (!input.longMemEvalRepo) {
+    throw new Error("LONGMEMEVAL_REPO is required when --official-judge is passed.");
+  }
+
+  const command = buildOfficialJudgeCommand({
+    longMemEvalRepo: input.longMemEvalRepo,
+    model: input.model,
+    hypothesesPath: input.hypothesesPath,
+    datasetPath: input.datasetPath,
+    pythonCommand: input.pythonCommand,
+  });
+  const stdoutPath = path.join(input.outDir, "official-judge.stdout.txt");
+  const stderrPath = path.join(input.outDir, "official-judge.stderr.txt");
+  const logPath = path.join(input.outDir, "official-judge.log");
+  const summaryPath = path.join(input.outDir, "official-judge.json");
+
+  const { stdout, stderr } = await execFileAsync(command.command, command.args, {
+    cwd: command.cwd,
+    maxBuffer: 1024 * 1024 * 64,
+    env: process.env,
+  });
+
+  await writeFile(stdoutPath, stdout);
+  await writeFile(stderrPath, stderr);
+
+  const officialLog = await readFile(command.expectedLogPath, "utf8")
+    .catch(() => [stdout, stderr].filter(Boolean).join("\n"));
+  await writeFile(logPath, officialLog);
+
+  const datasetRows = await readDatasetRows(input.datasetPath);
+  const metrics = parseOfficialJudgeLog(`${stdout}\n${officialLog}`, datasetRows);
+  const result: OfficialJudgeResult = {
+    model: input.model,
+    datasetPath: path.resolve(input.datasetPath),
+    command,
+    logPath,
+    stdoutPath,
+    stderrPath,
+    summaryPath,
+    metrics,
+  };
+
+  await writeFile(summaryPath, `${JSON.stringify(result, null, 2)}\n`);
+  return result;
+}
+
+function labelToBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value > 0;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "correct", "pass"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "incorrect", "wrong", "fail"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+function parsePrintedAccuracy(value: string): number | undefined {
+  const match = value.match(/\b(?:overall\s+)?(?:accuracy|score)\s*[:=]\s*(\d+(?:\.\d+)?)\s*%?/i);
+  if (!match) {
+    return undefined;
+  }
+
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
+async function readDatasetRows(datasetPath: string): Promise<Array<{ question_id?: string; question_type?: string }>> {
+  try {
+    const raw = await readFile(datasetPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((row): row is { question_id?: string; question_type?: string } =>
+          Boolean(row && typeof row === "object"),
+        )
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function isOfficialProviderRun(): boolean {
@@ -150,6 +388,10 @@ if (process.argv[1]?.endsWith("longmemeval-official.ts") || process.argv[1]?.end
     splitName: valueAfter(args, "--split-name"),
     out: valueAfter(args, "--out"),
     allowLocal: args.includes("--allow-local"),
+    officialJudge: args.includes("--official-judge"),
+    judgeModel: valueAfter(args, "--judge-model"),
+    longMemEvalRepo: valueAfter(args, "--longmemeval-repo"),
+    pythonCommand: valueAfter(args, "--python"),
   })
     .then((output) => {
       console.log(JSON.stringify(output, null, 2));
